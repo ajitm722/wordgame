@@ -1031,11 +1031,68 @@ make test-race && make test-cover
 
 ---
 
-## 13. SDE1 Checklist
+## 13. Smoke Tests
+
+End-to-end smoke tests verify the full HTTP stack works together — routes are wired correctly, JSON serialisation is round-trip safe, and the server behaves correctly at the TCP/HTTP protocol level.
+
+### 13.1 What they catch that unit tests miss
+
+| Bug class | Unit tests | Smoke tests |
+|-----------|:----------:|:-----------:|
+| Wrong `Content-Type` header | Miss¹ | **Caught** |
+| Route not registered (typo in path) | Miss | **Caught** |
+| Handler signature mismatch | Miss | **Caught** |
+| Response body truncated at TCP level | Miss | **Caught** |
+| `ListenAndServe` / port binding errors | Miss | **Caught**² |
+| Game logic bugs | Caught | Caught |
+
+¹ Handler tests use `httptest.NewRecorder`, which bypasses the HTTP transport layer — content-type headers set via `w.Header().Set()` still appear, but the real HTTP serialisation path is never exercised.
+
+² Via `run()` extraction — `main()` is now a thin wrapper around `run()`, which accepts `args`, `stdout`, `stderr` and returns `error`. This makes it possible to write tests that verify startup failures without calling `log.Fatal`.
+
+### 13.2 Test design
+
+The smoke test (`cmd/wordgame/smoke_test.go`) uses Go's built-in `httptest.Server` to start a real HTTP server on a random port, then sends actual TCP requests via `http.Post`. The server is configured with a deterministic word list (`["ZZZZ"]`) so every guess outcome is predictable:
+
+- `'Z'` → always correct (board changes, guesses unchanged)
+- `'A'` → always wrong (board unchanged, guesses decremented)
+
+Four test cases cover the full game lifecycle:
+
+```go
+TestSmokeNewGame_Shape      // POST /new → valid JSON shape
+TestSmokeGuess_Correct      // POST /guess with correct letter
+TestSmokeGuess_Wrong        // POST /guess with wrong letter
+TestSmokeGuess_DeletedGame  // 6 wrong guesses → game deleted → POST /guess → 404
+```
+
+### 13.3 Running smoke tests
+
+```bash
+# Run only the smoke tests (faster)
+make smoke
+
+# Or run everything including smoke
+make test
+```
+
+### 13.4 Why `run()` extraction and `WithIDGenerator`?
+
+Two refactors enabled clean smoke tests:
+
+1. **`run()` extraction** (`cmd/wordgame/main.go`): The old `main()` called `log.Fatal` on any error — untestable. The new `run()` accepts `(args []string, stdout, stderr io.Writer)` and returns `error`, following the FleetDM pattern for testable server startup. `main()` is now a three-line wrapper.
+
+   The `stderr` parameter is wired into a custom logger (`log.New(stderr, ...)`) so startup messages are captured in tests rather than polluting terminal output. The `args` and `stdout` parameters are reserved for future use (CLI flags and structured output, respectively) — the signature is stable from day one so adding those features won't change the public API.
+
+2. **Functional options** (`internal/handler/handler.go`): The old `var generateID` was a mutable package-level variable — the test swapped it with a defer/restore pattern that's fragile in concurrent tests. The new `WithIDGenerator(fn)` functional option injects the generator at construction time, exactly like `http.Server` uses `(*testing.T).Run` and FleetDM's `StartServerWithOpts`.
+
+---
+
+## 14. SDE1 Checklist
 
 Use this checklist to verify everything is complete before you submit:
 
-- [ ] `Makefile` — all targets defined: `build`, `run`, `test`, `test-race`, `test-cover`, `test-cover-html`, `new-game`, `guess`, `clean`
+- [ ] `Makefile` — all targets defined: `build`, `run`, `test`, `test-race`, `test-cover`, `test-cover-html`, `smoke`, `new-game`, `guess`, `clean`
 - [ ] `pkg/identifier/id.go` — `GenerateIdentifier()` exported, uses `fmt.Errorf` + `%w`
 - [ ] `pkg/words/loader.go` — `LoadWords(r io.Reader)` exported, decoupled from filesystem
 - [ ] `internal/game/game.go` — `Game` struct, `NewGame()`, `ApplyGuess(rune)`, win/loss detection
@@ -1053,4 +1110,7 @@ Use this checklist to verify everything is complete before you submit:
 - [ ] Race detector passes — `make test-race` (or `go test -race ./...`)
 - [ ] Coverage report clean — `make test-cover` shows meaningful coverage
 - [ ] Manual CLI testing — `make new-game` + `make guess` flow in two terminals
+- [ ] Smoke tests — `make smoke` passes, covers new-game, correct/wrong guess, deleted game
+- [ ] `run()` extracted from `main()` — `main()` is a thin wrapper, startup errors return `error`
+- [ ] `var generateID` replaced with `WithIDGenerator` functional option — no mutable globals
 - [ ] Go 1.21 — `go.mod` updated, `math/rand/v2` used, `pkg/errors` dropped

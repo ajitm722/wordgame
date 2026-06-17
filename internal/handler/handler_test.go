@@ -847,15 +847,10 @@ func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 // TestHandleNewGame_IdentifierError verifies that when ID generation fails,
 // the handler returns a 500 Internal Server Error.
 func TestHandleNewGame_IdentifierError(t *testing.T) {
-	orig := generateID
-	defer func() { generateID = orig }()
-
-	generateID = func() (string, error) {
-		return "", errors.New("uuid failure")
-	}
-
 	s := store.NewGameStore()
-	srv := NewServer(s, []string{"APPLE"})
+	srv := NewServer(s, []string{"APPLE"}, WithIDGenerator(func() (string, error) {
+		return "", errors.New("uuid failure")
+	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/new", nil)
 	rec := httptest.NewRecorder()

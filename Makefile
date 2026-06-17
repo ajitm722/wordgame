@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-cover test-cover-html clean new-game guess
+.PHONY: build run test test-race test-cover test-cover-html smoke clean new-game guess
 
 ## Build: compile the server binary to bin/wordgame
 build:
@@ -25,6 +25,10 @@ test-cover:
 test-cover-html:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out
+
+## Smoke: run end-to-end HTTP smoke tests against a real server
+smoke:
+	go test -v -run '^TestSmoke' ./cmd/wordgame/
 
 ## New-game: hit POST /new and pretty-print the result (requires jq)
 new-game:

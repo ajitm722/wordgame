@@ -12,20 +12,33 @@ import (
 	"github.com/fleetdm/wordgame/pkg/identifier"
 )
 
-// generateID is the function used to generate game identifiers.
-// Defaults to identifier.GenerateIdentifier. Swappable in tests to cover error paths.
-var generateID = identifier.GenerateIdentifier
-
 // Server holds the dependencies needed by HTTP handlers.
 // All dependencies are injected via NewServer — no global state.
 type Server struct {
-	store *store.GameStore
-	words []string
+	store      *store.GameStore
+	words      []string
+	generateID func() (string, error)
 }
 
-// NewServer creates a Server with the given dependencies.
-func NewServer(store *store.GameStore, words []string) *Server {
-	return &Server{store: store, words: words}
+// ServerOption is a functional option for configuring a Server.
+type ServerOption func(*Server)
+
+// WithIDGenerator overrides the default ID generator, useful in tests.
+func WithIDGenerator(fn func() (string, error)) ServerOption {
+	return func(s *Server) { s.generateID = fn }
+}
+
+// NewServer creates a Server with the given dependencies and optional functional options.
+func NewServer(store *store.GameStore, words []string, opts ...ServerOption) *Server {
+	s := &Server{
+		store:      store,
+		words:      words,
+		generateID: identifier.GenerateIdentifier,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // pickWord randomly selects a word from the loaded word list.
@@ -40,7 +53,7 @@ func (s *Server) HandleNewGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := generateID()
+	id, err := s.generateID()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate game ID")
 		return

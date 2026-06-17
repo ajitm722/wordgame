@@ -2,6 +2,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,17 +15,29 @@ import (
 )
 
 func main() {
+	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run contains the server startup logic, extracted from main() for testability.
+// args is reserved for future CLI flag parsing (e.g. -port, -words-file).
+// stdout is reserved for future structured output (e.g. JSON machine-readable status).
+// stderr is wired into a custom logger so tests can capture startup messages.
+func run(args []string, stdout, stderr io.Writer) error {
+	logger := log.New(stderr, "", log.LstdFlags)
+
 	f, err := os.Open("words.txt")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer f.Close()
 
 	wordList, err := words.LoadWords(f)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	log.Printf("loaded %d words from words.txt", len(wordList))
+	logger.Printf("loaded %d words from words.txt", len(wordList))
 
 	// Create in-memory game store
 	gameStore := store.NewGameStore()
@@ -39,10 +52,11 @@ func main() {
 
 	// Start listening
 	addr := "localhost:" + port()
-	log.Printf("starting server on http://%s", addr)
+	logger.Printf("starting server on http://%s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 // port returns the listen port from the PORT environment variable,
