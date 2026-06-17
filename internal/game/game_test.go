@@ -148,7 +148,7 @@ func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
 	// First wrong guess
-	g.ApplyGuess('Z')
+	_ = g.ApplyGuess('Z')
 	if g.GuessesRemaining != 5 {
 		t.Fatalf("after first Z: GuessesRemaining = %d, want 5", g.GuessesRemaining)
 	}
@@ -165,9 +165,9 @@ func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 
 func TestApplyGuess_RepeatCorrect_RevealsAgain(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
-	g.ApplyGuess('P')
-	g.ApplyGuess('L')
-	g.ApplyGuess('E')
+	_ = g.ApplyGuess('P')
+	_ = g.ApplyGuess('L')
+	_ = g.ApplyGuess('E')
 
 	// Repeat a correct letter 'P' — already revealed, no change, no penalty
 	beforeGuesses := g.GuessesRemaining
@@ -391,7 +391,7 @@ func TestApplyWrongGuess(t *testing.T) {
 
 func TestSnapshot(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
-	g.ApplyGuess('P')
+	_ = g.ApplyGuess('P')
 
 	snap := g.Snapshot()
 	if snap.Current != "_PP__" {

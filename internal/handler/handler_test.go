@@ -72,7 +72,7 @@ func TestHandleGuess_Correct(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// Make a correct guess
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"A"}`)
@@ -86,7 +86,7 @@ func TestHandleGuess_Correct(t *testing.T) {
 	}
 
 	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 
 	if resp.Current != "A____" {
 		t.Errorf("current = %q, want %q", resp.Current, "A____")
@@ -104,7 +104,7 @@ func TestHandleGuess_Wrong(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"Z"}`)
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -117,7 +117,7 @@ func TestHandleGuess_Wrong(t *testing.T) {
 	}
 
 	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 
 	if resp.Current != "_____" {
 		t.Errorf("current = %q, want %q", resp.Current, "_____")
@@ -142,7 +142,7 @@ func TestHandleGuess_GameNotFound(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "game not found" {
 		t.Errorf("error = %q, want %q", errResp.Error, "game not found")
 	}
@@ -156,7 +156,7 @@ func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// Win the game — word should be revealed
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"A"}`)
@@ -165,7 +165,7 @@ func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	srv.HandleGuess(rec, req)
 
 	var winResp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &winResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &winResp)
 	if winResp.Word != "A" {
 		t.Errorf("word should be revealed on win, got %q", winResp.Word)
 	}
@@ -181,7 +181,7 @@ func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "game not found" {
 		t.Errorf("error = %q, want %q (game should be deleted after completion)", errResp.Error, "game not found")
 	}
@@ -195,7 +195,7 @@ func TestHandleGuess_InvalidGuess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	tests := []struct {
 		name  string
@@ -221,7 +221,7 @@ func TestHandleGuess_InvalidGuess(t *testing.T) {
 			}
 
 			var errResp ErrorResponse
-			json.Unmarshal(rec.Body.Bytes(), &errResp)
+			_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 			if errResp.Error != tt.want {
 				t.Errorf("error = %q, want %q", errResp.Error, tt.want)
 			}
@@ -244,7 +244,7 @@ func TestHandleGuess_MissingID(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "missing game id" {
 		t.Errorf("error = %q, want %q", errResp.Error, "missing game id")
 	}
@@ -265,7 +265,7 @@ func TestHandleGuess_InvalidJSON(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "invalid request body" {
 		t.Errorf("error = %q, want %q", errResp.Error, "invalid request body")
 	}
@@ -293,7 +293,7 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// First wrong guess
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"Z"}`)
@@ -302,7 +302,7 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	srv.HandleGuess(rec, req)
 
 	var resp1 GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp1)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp1)
 
 	// Duplicate same wrong guess — must decrement again
 	body = strings.NewReader(`{"id":"` + newResp.ID + `","guess":"Z"}`)
@@ -311,7 +311,7 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	srv.HandleGuess(rec, req)
 
 	var resp2 GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp2)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp2)
 
 	// Repeat wrong guess: 5 → 4 (every guess counts)
 	if resp2.GuessesRemaining != resp1.GuessesRemaining-1 {
@@ -469,12 +469,12 @@ func TestHandleNewGame_MultipleCreatesIndependent(t *testing.T) {
 	rec1 := httptest.NewRecorder()
 	srv.HandleNewGame(rec1, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var r1 NewGameResponse
-	json.Unmarshal(rec1.Body.Bytes(), &r1)
+	_ = json.Unmarshal(rec1.Body.Bytes(), &r1)
 
 	rec2 := httptest.NewRecorder()
 	srv.HandleNewGame(rec2, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var r2 NewGameResponse
-	json.Unmarshal(rec2.Body.Bytes(), &r2)
+	_ = json.Unmarshal(rec2.Body.Bytes(), &r2)
 
 	// IDs must be unique
 	if r1.ID == r2.ID {
@@ -508,7 +508,7 @@ func TestHandleGuess_DisallowUnknownFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// Send an extra field that doesn't belong
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"A","extra":"bad"}`)
@@ -521,7 +521,7 @@ func TestHandleGuess_DisallowUnknownFields(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "invalid request body" {
 		t.Errorf("error = %q, want %q", errResp.Error, "invalid request body")
 	}
@@ -538,7 +538,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	if newResp.Current != "___" {
 		t.Errorf("initial current = %q, want %q", newResp.Current, "___")
@@ -551,7 +551,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 	srv.HandleGuess(rec, req)
 
 	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Current != "C__" {
 		t.Errorf("after 'C': current = %q, want %q", resp.Current, "C__")
 	}
@@ -564,7 +564,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/guess", body)
 	rec = httptest.NewRecorder()
 	srv.HandleGuess(rec, req)
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Current != "CA_" {
 		t.Errorf("after 'A': current = %q, want %q", resp.Current, "CA_")
 	}
@@ -574,7 +574,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/guess", body)
 	rec = httptest.NewRecorder()
 	srv.HandleGuess(rec, req)
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Current != "CAT" {
 		t.Errorf("after 'T': current = %q, want %q", resp.Current, "CAT")
 	}
@@ -594,7 +594,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 		t.Errorf("deleted game should return 404, got %d", rec.Code)
 	}
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "game not found" {
 		t.Errorf("error = %q, want %q", errResp.Error, "game not found")
 	}
@@ -611,7 +611,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// 2. Make 6 wrong guesses
 	wrongLetters := []string{"Z", "Y", "X", "W", "V", "U"}
@@ -621,7 +621,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/guess", body)
 		rec = httptest.NewRecorder()
 		srv.HandleGuess(rec, req)
-		json.Unmarshal(rec.Body.Bytes(), &lastResp)
+		_ = json.Unmarshal(rec.Body.Bytes(), &lastResp)
 
 		expectedRemaining := 5 - i
 		if lastResp.GuessesRemaining != expectedRemaining {
@@ -667,7 +667,7 @@ func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// Spawn 10 goroutines all guessing 'A' concurrently
 	done := make(chan bool, 10)
@@ -715,12 +715,12 @@ func TestHandleGuess_ConcurrentDifferentGames(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var r1 NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &r1)
+	_ = json.Unmarshal(rec.Body.Bytes(), &r1)
 
 	rec = httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var r2 NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &r2)
+	_ = json.Unmarshal(rec.Body.Bytes(), &r2)
 
 	// Concurrently guess on different games
 	done := make(chan bool, 2)
@@ -802,7 +802,7 @@ func TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	// Lowercase with trailing/leading whitespace
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"  p  "}`)
@@ -815,7 +815,7 @@ func TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace(t *testing.T) {
 	}
 
 	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Current != "_PP__" {
 		t.Errorf("current = %q, want %q (lowercase+whitespace 'p' should be normalised)", resp.Current, "_PP__")
 	}
@@ -830,7 +830,7 @@ func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
 	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
 	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"A"}`)
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -838,7 +838,7 @@ func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 	srv.HandleGuess(rec, req)
 
 	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.ID != newResp.ID {
 		t.Errorf("response ID = %q, want %q", resp.ID, newResp.ID)
 	}
@@ -861,7 +861,7 @@ func TestHandleNewGame_IdentifierError(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "failed to generate game ID" {
 		t.Errorf("error = %q, want %q", errResp.Error, "failed to generate game ID")
 	}
@@ -888,7 +888,7 @@ func TestHandleGuess_ApplyGuessError_GameAlreadyWon(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "game already completed" {
 		t.Errorf("error = %q, want %q", errResp.Error, "game already completed")
 	}
@@ -914,7 +914,7 @@ func TestHandleGuess_ApplyGuessError_GameAlreadyLost(t *testing.T) {
 	}
 
 	var errResp ErrorResponse
-	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
 	if errResp.Error != "game already completed" {
 		t.Errorf("error = %q, want %q", errResp.Error, "game already completed")
 	}

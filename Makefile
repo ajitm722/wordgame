@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-cover test-cover-html smoke clean new-game guess
+.PHONY: build run test test-race test-cover test-cover-html smoke fmt vet lint check clean new-game guess
 
 ## Build: compile the server binary to bin/wordgame
 build:
@@ -29,6 +29,21 @@ test-cover-html:
 ## Smoke: run end-to-end HTTP smoke tests against a real server
 smoke:
 	go test -v -run '^TestSmoke' ./cmd/wordgame/
+
+## Fmt: format all Go code
+fmt:
+	go fmt ./...
+
+## Vet: run Go vet (reports suspicious constructs)
+vet:
+	go vet ./...
+
+## Lint: run golangci-lint (must be installed separately: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
+lint:
+	golangci-lint run ./...
+
+## Check: run all quality checks in sequence (fmt, vet, lint, test)
+check: fmt vet lint test
 
 ## New-game: hit POST /new and pretty-print the result (requires jq)
 new-game:

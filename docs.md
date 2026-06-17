@@ -60,7 +60,7 @@ wordgame-main/
 │       └── id_test.go
 ├── Makefile                         ← Build, test, coverage & game interaction targets
 ├── words.txt                        ← Word dictionary data file (unchanged)
-├── go.mod                           ← Go 1.21, minimal deps (google/uuid only)
+├── go.mod                           ← Go 1.24, minimal deps (google/uuid only)
 ├── go.sum
 ├── Procfile
 ├── README.md
@@ -1080,19 +1080,58 @@ make test
 
 Two refactors enabled clean smoke tests:
 
-1. **`run()` extraction** (`cmd/wordgame/main.go`): The old `main()` called `log.Fatal` on any error — untestable. The new `run()` accepts `(args []string, stdout, stderr io.Writer)` and returns `error`, following the FleetDM pattern for testable server startup. `main()` is now a three-line wrapper.
+1. **`run()` extraction** (`cmd/wordgame/main.go`): The old `main()` called `log.Fatal` on any error — untestable. The new `run(stderr io.Writer)` returns `error`, following the FleetDM pattern for testable server startup. `main()` is now a three-line wrapper.
 
-   The `stderr` parameter is wired into a custom logger (`log.New(stderr, ...)`) so startup messages are captured in tests rather than polluting terminal output. The `args` and `stdout` parameters are reserved for future use (CLI flags and structured output, respectively) — the signature is stable from day one so adding those features won't change the public API.
+   The `stderr` parameter is wired into a custom logger (`log.New(stderr, ...)`) so startup messages are captured in tests rather than polluting terminal output. This keeps test output clean and lets future tests assert on startup log lines.
 
 2. **Functional options** (`internal/handler/handler.go`): The old `var generateID` was a mutable package-level variable — the test swapped it with a defer/restore pattern that's fragile in concurrent tests. The new `WithIDGenerator(fn)` functional option injects the generator at construction time, exactly like `http.Server` uses `(*testing.T).Run` and FleetDM's `StartServerWithOpts`.
 
 ---
 
-## 14. SDE1 Checklist
+## 14. Linting and Formatting
+
+The project uses three tiers of static analysis plus a custom `.golangci.yml` config, each wired into its own `make` target:
+
+| Target | Tool | What it checks | When to run |
+|--------|------|----------------|-------------|
+| `make fmt` | `go fmt` | Code formatting (tab indentation, alignment) | Before any commit |
+| `make vet` | `go vet` | Suspicious constructs (e.g., unused code, printf arg mismatches) | Before any commit |
+| `make lint` | `golangci-lint` | 80+ linters aggregated (incl. `errcheck`, `govet`, `staticcheck`, **`unparam`**) | In CI / before PR |
+| `make check` | All of the above + tests | Full quality gate — fmt → vet → lint → test | In CI / release |
+
+### 14.1 Quick developer workflow
+
+```bash
+# Format, vet, and run tests in one step
+make check
+
+# Or run linting separately if you don't have golangci-lint
+make fmt && make vet && make test
+```
+
+### 14.2 Installing golangci-lint
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+### 14.3 What was fixed to get clean
+
+Before adding these targets, the codebase had 9 pre-existing issues that `golangci-lint` caught and were fixed:
+
+- **`rand.IntN` → `rand.Intn`** (`handler.go`): `rand.IntN` requires Go 1.22+; module was pinned at Go 1.21. Updated `go.mod` to `go 1.24`.
+- **Unchecked `g.ApplyGuess()`** (`game_test.go`, 4 spots): Setup calls in tests discarded the error return. Added `_ = ` prefix.
+- **Unchecked `json.Unmarshal()`** (`handler_test.go`, 25+ spots): `rec.Body.Bytes()` always contains valid JSON in these contexts. Added `_ = ` prefix.
+- **Unchecked `json.NewEncoder(w).Encode()`** (`response.go`): HTTP response encoding errors are typically network-level and not actionable. Added `_ = ` prefix.
+- **Unused function parameters** (`main.go`, `smoke_test.go`): `unparam` caught `args`/`stdout` in `run()` and an unused return value in `setupSmoke()`. Removed the dead parameters and simplified the signatures.
+
+---
+
+## 15. SDE1 Checklist
 
 Use this checklist to verify everything is complete before you submit:
 
-- [ ] `Makefile` — all targets defined: `build`, `run`, `test`, `test-race`, `test-cover`, `test-cover-html`, `smoke`, `new-game`, `guess`, `clean`
+- [ ] `Makefile` — all targets defined: `build`, `run`, `test`, `test-race`, `test-cover`, `test-cover-html`, `smoke`, `fmt`, `vet`, `lint`, `check`, `new-game`, `guess`, `clean`
 - [ ] `pkg/identifier/id.go` — `GenerateIdentifier()` exported, uses `fmt.Errorf` + `%w`
 - [ ] `pkg/words/loader.go` — `LoadWords(r io.Reader)` exported, decoupled from filesystem
 - [ ] `internal/game/game.go` — `Game` struct, `NewGame()`, `ApplyGuess(rune)`, win/loss detection
@@ -1113,4 +1152,5 @@ Use this checklist to verify everything is complete before you submit:
 - [ ] Smoke tests — `make smoke` passes, covers new-game, correct/wrong guess, deleted game
 - [ ] `run()` extracted from `main()` — `main()` is a thin wrapper, startup errors return `error`
 - [ ] `var generateID` replaced with `WithIDGenerator` functional option — no mutable globals
-- [ ] Go 1.21 — `go.mod` updated, `math/rand/v2` used, `pkg/errors` dropped
+- [ ] Linting pipeline — `make check` runs fmt → vet → lint → test, all pass
+- [ ] Go 1.24 — `go.mod` updated to minimum version required by `math/rand/v2`

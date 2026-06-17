@@ -16,7 +16,8 @@ import (
 
 // setupSmoke starts a real HTTP server with a deterministic word list.
 // The word "ZZZZ" means 'Z' is always correct and any other letter is wrong.
-func setupSmoke(t *testing.T) (*httptest.Server, string) {
+// Returns the server URL. The server is automatically cleaned up at end of test.
+func setupSmoke(t *testing.T) string {
 	t.Helper()
 
 	store := store.NewGameStore()
@@ -28,7 +29,7 @@ func setupSmoke(t *testing.T) (*httptest.Server, string) {
 
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
-	return ts, ts.URL
+	return ts.URL
 }
 
 // postJSON is a helper that sends a POST request with an optional JSON body.
@@ -59,7 +60,7 @@ func postJSON(t *testing.T, url, path string, body any) (*http.Response, []byte)
 
 // TestSmokeNewGame_Shape verifies that POST /new returns the correct shape.
 func TestSmokeNewGame_Shape(t *testing.T) {
-	_, url := setupSmoke(t)
+	url := setupSmoke(t)
 
 	resp, body := postJSON(t, url, "/new", nil)
 
@@ -89,7 +90,7 @@ func TestSmokeNewGame_Shape(t *testing.T) {
 
 // TestSmokeGuess_Correct verifies a correct guess updates the board.
 func TestSmokeGuess_Correct(t *testing.T) {
-	_, url := setupSmoke(t)
+	url := setupSmoke(t)
 
 	// Create a new game
 	_, newBody := postJSON(t, url, "/new", nil)
@@ -126,7 +127,7 @@ func TestSmokeGuess_Correct(t *testing.T) {
 
 // TestSmokeGuess_Wrong verifies a wrong guess decrements guesses.
 func TestSmokeGuess_Wrong(t *testing.T) {
-	_, url := setupSmoke(t)
+	url := setupSmoke(t)
 
 	// Create a new game
 	_, newBody := postJSON(t, url, "/new", nil)
@@ -163,7 +164,7 @@ func TestSmokeGuess_Wrong(t *testing.T) {
 
 // TestSmokeGuess_DeletedGame verifies that guessing on a completed game returns 404.
 func TestSmokeGuess_DeletedGame(t *testing.T) {
-	_, url := setupSmoke(t)
+	url := setupSmoke(t)
 
 	// Create a new game
 	_, newBody := postJSON(t, url, "/new", nil)
@@ -218,5 +219,3 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 		t.Errorf("error message = %q, want %q", errResp.Error, "game not found")
 	}
 }
-
-
