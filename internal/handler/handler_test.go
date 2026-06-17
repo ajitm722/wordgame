@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,64 +127,6 @@ func TestHandleGuess_Wrong(t *testing.T) {
 	}
 }
 
-func TestHandleGuess_PostelsLaw_Lowercase(t *testing.T) {
-	s := store.NewGameStore()
-	words := []string{"APPLE"}
-	srv := NewServer(s, words)
-
-	rec := httptest.NewRecorder()
-	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
-	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
-
-	// Guess with lowercase — should be normalised to uppercase
-	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"a"}`)
-	req := httptest.NewRequest(http.MethodPost, "/guess", body)
-	rec = httptest.NewRecorder()
-
-	srv.HandleGuess(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
-
-	if resp.Current != "A____" {
-		t.Errorf("current = %q, want %q (lowercase 'a' should be normalised)", resp.Current, "A____")
-	}
-}
-
-func TestHandleGuess_PostelsLaw_Whitespace(t *testing.T) {
-	s := store.NewGameStore()
-	words := []string{"APPLE"}
-	srv := NewServer(s, words)
-
-	rec := httptest.NewRecorder()
-	srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
-	var newResp NewGameResponse
-	json.Unmarshal(rec.Body.Bytes(), &newResp)
-
-	// Guess with whitespace — should be trimmed
-	body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":" P "}`)
-	req := httptest.NewRequest(http.MethodPost, "/guess", body)
-	rec = httptest.NewRecorder()
-
-	srv.HandleGuess(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	var resp GuessResponse
-	json.Unmarshal(rec.Body.Bytes(), &resp)
-
-	if resp.Current != "_PP__" {
-		t.Errorf("current = %q, want %q (whitespace should be trimmed)", resp.Current, "_PP__")
-	}
-}
-
 func TestHandleGuess_GameNotFound(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -194,8 +137,8 @@ func TestHandleGuess_GameNotFound(t *testing.T) {
 
 	srv.HandleGuess(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 
 	var errResp ErrorResponse
@@ -233,8 +176,8 @@ func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	rec = httptest.NewRecorder()
 	srv.HandleGuess(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 
 	var errResp ErrorResponse
@@ -273,8 +216,8 @@ func TestHandleGuess_InvalidGuess(t *testing.T) {
 
 			srv.HandleGuess(rec, req)
 
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
 			}
 
 			var errResp ErrorResponse
@@ -377,6 +320,8 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	}
 }
 
+// --- JSON response helper tests ---
+
 func TestWriteError_ContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeError(w, http.StatusBadRequest, "test error")
@@ -394,6 +339,125 @@ func TestWriteJSON_ContentType(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", w.Header().Get("Content-Type"))
 	}
 }
+
+// --- Postel's Law normalisation tests ---
+
+func TestNormaliseGuess(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"already uppercase", "A", "A"},
+		{"lowercase", "a", "A"},
+		{"mixed case", "AbC", "ABC"},
+		{"leading whitespace", "  A", "A"},
+		{"trailing whitespace", "A  ", "A"},
+		{"surrounding whitespace", "  A  ", "A"},
+		{"whitespace only", "   ", ""},
+		{"empty", "", ""},
+		{"multiple letters", "APPLE", "APPLE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normaliseGuess(tt.input)
+			if got != tt.want {
+				t.Errorf("normaliseGuess(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateGuess(t *testing.T) {
+	tests := []struct {
+		name    string
+		guess   string
+		wantErr string
+	}{
+		{"valid letter", "A", ""},
+		{"valid letter Z", "Z", ""},
+		{"valid letter M", "M", ""},
+		{"empty string", "", "missing guess"},
+		{"too long", "AB", "guess must be a single character"},
+		{"digit", "5", "guess must be a single letter A-Z"},
+		{"special char", "@", "guess must be a single letter A-Z"},
+		{"lowercase after normalisation already done", "a", "guess must be a single letter A-Z"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGuess(tt.guess)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("validateGuess(%q) = %v, want nil", tt.guess, err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("validateGuess(%q) = nil, want %q", tt.guess, tt.wantErr)
+				} else if err.Error() != tt.wantErr {
+					t.Errorf("validateGuess(%q) = %q, want %q", tt.guess, err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+// --- decodeJSONBody tests ---
+
+func TestDecodeJSONBody_Valid(t *testing.T) {
+	body := strings.NewReader(`{"id":"abc","guess":"A"}`)
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+
+	var result GuessRequest
+	if err := decodeJSONBody(req, &result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ID != "abc" {
+		t.Errorf("ID = %q, want %q", result.ID, "abc")
+	}
+	if result.Guess != "A" {
+		t.Errorf("Guess = %q, want %q", result.Guess, "A")
+	}
+}
+
+func TestDecodeJSONBody_UnknownFields(t *testing.T) {
+	body := strings.NewReader(`{"id":"abc","guess":"A","extra":"bad"}`)
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+
+	var result GuessRequest
+	if err := decodeJSONBody(req, &result); err == nil {
+		t.Error("expected error for unknown fields")
+	}
+}
+
+func TestDecodeJSONBody_InvalidJSON(t *testing.T) {
+	body := strings.NewReader(`not json`)
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+
+	var result GuessRequest
+	if err := decodeJSONBody(req, &result); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestDecodeJSONBody_PartialJSON(t *testing.T) {
+	body := strings.NewReader(`{"id":"abc"}`) // guess missing — valid JSON, just partial
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+
+	var result GuessRequest
+	if err := decodeJSONBody(req, &result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ID != "abc" {
+		t.Errorf("ID = %q, want %q", result.ID, "abc")
+	}
+	if result.Guess != "" {
+		t.Errorf("Guess = %q, want empty", result.Guess)
+	}
+}
+
+// --- Integration tests ---
 
 // TestHandleNewGame_MultipleCreatesIndependent verifies that
 // creating multiple games produces independent states.
@@ -526,8 +590,8 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/guess", body)
 	rec = httptest.NewRecorder()
 	srv.HandleGuess(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("deleted game should return 400, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("deleted game should return 404, got %d", rec.Code)
 	}
 	var errResp ErrorResponse
 	json.Unmarshal(rec.Body.Bytes(), &errResp)
@@ -588,8 +652,8 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
 	rec = httptest.NewRecorder()
 	srv.HandleGuess(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("deleted game should return 400, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("deleted game should return 404, got %d", rec.Code)
 	}
 }
 
@@ -777,5 +841,86 @@ func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.ID != newResp.ID {
 		t.Errorf("response ID = %q, want %q", resp.ID, newResp.ID)
+	}
+}
+
+// TestHandleNewGame_IdentifierError verifies that when ID generation fails,
+// the handler returns a 500 Internal Server Error.
+func TestHandleNewGame_IdentifierError(t *testing.T) {
+	orig := generateID
+	defer func() { generateID = orig }()
+
+	generateID = func() (string, error) {
+		return "", errors.New("uuid failure")
+	}
+
+	s := store.NewGameStore()
+	srv := NewServer(s, []string{"APPLE"})
+
+	req := httptest.NewRequest(http.MethodPost, "/new", nil)
+	rec := httptest.NewRecorder()
+	srv.HandleNewGame(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	var errResp ErrorResponse
+	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	if errResp.Error != "failed to generate game ID" {
+		t.Errorf("error = %q, want %q", errResp.Error, "failed to generate game ID")
+	}
+}
+
+// TestHandleGuess_ApplyGuessError_GameAlreadyWon verifies that
+// a completed game returns 409 Conflict — the game exists but is in
+// a conflicting state (already completed by a concurrent request).
+func TestHandleGuess_ApplyGuessError_GameAlreadyWon(t *testing.T) {
+	s := store.NewGameStore()
+	srv := NewServer(s, []string{"APPLE"})
+
+	g := game.NewGame("already-won", "APPLE")
+	g.Status = game.StatusWon
+	s.Save(g)
+
+	body := strings.NewReader(`{"id":"already-won","guess":"A"}`)
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+	rec := httptest.NewRecorder()
+	srv.HandleGuess(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+
+	var errResp ErrorResponse
+	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	if errResp.Error != "game already completed" {
+		t.Errorf("error = %q, want %q", errResp.Error, "game already completed")
+	}
+}
+
+// TestHandleGuess_ApplyGuessError_GameAlreadyLost verifies the same
+// 409 Conflict for a game that has already been lost.
+func TestHandleGuess_ApplyGuessError_GameAlreadyLost(t *testing.T) {
+	s := store.NewGameStore()
+	srv := NewServer(s, []string{"APPLE"})
+
+	g := game.NewGame("already-lost", "APPLE")
+	g.Status = game.StatusLost
+	s.Save(g)
+
+	body := strings.NewReader(`{"id":"already-lost","guess":"A"}`)
+	req := httptest.NewRequest(http.MethodPost, "/guess", body)
+	rec := httptest.NewRecorder()
+	srv.HandleGuess(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+
+	var errResp ErrorResponse
+	json.Unmarshal(rec.Body.Bytes(), &errResp)
+	if errResp.Error != "game already completed" {
+		t.Errorf("error = %q, want %q", errResp.Error, "game already completed")
 	}
 }

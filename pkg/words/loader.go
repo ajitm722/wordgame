@@ -28,7 +28,7 @@ func LoadWords(r io.Reader) ([]string, error) {
 	var words []string
 	for scanner.Scan() {
 		word := strings.ToUpper(strings.TrimSpace(scanner.Text()))
-		if wordRegex.MatchString(word) {
+		if isValidWord(word) {
 			words = append(words, word)
 		}
 	}
@@ -37,4 +37,10 @@ func LoadWords(r io.Reader) ([]string, error) {
 	}
 
 	return words, nil
+}
+
+// isValidWord reports whether word is a non-empty string consisting only
+// of uppercase A-Z characters.
+func isValidWord(word string) bool {
+	return wordRegex.MatchString(word)
 }

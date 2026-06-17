@@ -1,6 +1,6 @@
 # Word Game — Frontend Wireframes & State Design
 
-> **⚠️ Disclaimer:** This document was vibe-coded as a design artifact — it simulates the frontend experience and wireframe-first thinking for this API. The actual UI has not been implemented. Treat this as a napkin sketch that bridges the gap between "what the API returns" and "what the player sees."
+> **Disclaimer:** This document was vibe-coded as a design artifact — it simulates the frontend experience and wireframe-first thinking for this API. The actual UI has not been implemented. Treat this as a napkin sketch that bridges the gap between "what the API returns" and "what the player sees."
 
 ---
 
@@ -213,7 +213,7 @@ Player taps `P`. The letter is in the word (APPLE).
 │   └───┘ └───┘ └───┘ └───┘ └───┘      │
 │                                         │
 │   Guesses left:  ● ● ● ● ● ●  (6)     │
-│   "P" is correct! ✓                     │
+│   "P" is correct!                        │
 │                                         │
 │   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐      │
 │   │ A │ │ B │ │ C │ │ D │ │ E │      │
@@ -242,7 +242,7 @@ API:    POST /guess {id:"abc123","guess":"P"}
 State:  { gameId:"abc123", current:"_PP__", guesses:6,
           guessedLetters:["P"], status:"playing" }
 
-Note:   'P' button grays out (or gets a ✓) — frontend tracks which
+Note:   'P' button grays out (or gets marked correct) — frontend tracks which
         letters were guessed locally. Duplicate taps → no API call.
 ```
 
@@ -260,7 +260,7 @@ Player taps `Z`. The letter is NOT in the word.
 │   └───┘ └───┘ └───┘ └───┘ └───┘      │
 │                                         │
 │   Guesses left:  ● ● ● ● ● ○  (5) ←   │
-│   "Z" is not in the word ✗              │
+│   "Z" is not in the word                 │
 │                                         │
 │   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐      │
 │   │ A │ │ B │ │ C │ │ D │ │ E │      │
@@ -290,7 +290,7 @@ State:  { gameId:"abc123", current:"_PP__", guesses:5,
           guessedLetters:["P","Z"], status:"playing" }
 
 Note:   Guess counter drops. One dot goes from filled ● to empty ○.
-        'Z' grays out with an ✗ indicator. The board stays unchanged.
+        'Z' grays out with a wrong-guess indicator. The board stays unchanged.
 ```
 
 ---
@@ -303,7 +303,7 @@ Player guessed all letters. Last guess was `E`.
 ┌─────────────────────────────────────────┐
 │                                         │
 │          ╔═══════════════════╗          │
-│          ║   🎉 YOU WIN!    ║          │
+│          ║    YOU WIN!      ║          │
 │          ╚═══════════════════╝          │
 │                                         │
 │   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐      │
@@ -340,7 +340,7 @@ Player exhausted all 6 guesses without finding the word (`APPLE`).
 ┌─────────────────────────────────────────┐
 │                                         │
 │          ╔═══════════════════╗          │
-│          ║   💀 YOU LOSE    ║          │
+│          ║    YOU LOSE      ║          │
 │          ╚═══════════════════╝          │
 │                                         │
 │   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐      │
@@ -381,7 +381,7 @@ Note:   Server returns guesses_remaining:0. Frontend detects loss.
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│         ⚠️  Game not found             │
+│        Game not found                   │
 │                                         │
 │    This game may have expired or        │
 │    the server was restarted.            │
@@ -403,7 +403,7 @@ State:  { gameId:"expired-id", status:"error", error:"game not found" }
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│     ⚠️  This game is already over      │
+│     This game is already over           │
 │                                         │
 │         ┌──────────────┐               │
 │         │  PLAY AGAIN   │               │
@@ -422,7 +422,7 @@ State:  { status:"error", error:"game already completed" }
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│         ⚠️  Connection lost            │
+│         Connection lost                 │
 │                                         │
 │    Could not reach the server.          │
 │    Check your connection and try again. │

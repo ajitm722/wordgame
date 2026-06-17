@@ -3,10 +3,21 @@
 package game
 
 import (
-	"fmt"
+	"errors"
+	"regexp"
 	"strings"
 	"sync"
 )
+
+// Sentinel errors for game operations.
+var (
+	ErrGameCompleted = errors.New("game already completed")
+	ErrInvalidGuess  = errors.New("guess must be a single A-Z character")
+)
+
+// LetterRegex validates a single uppercase A-Z character.
+// Exported so that the handler package uses the same regex.
+var LetterRegex = regexp.MustCompile(`^[A-Z]$`)
 
 // Status represents the current state of a game.
 type Status int
@@ -49,55 +60,80 @@ func NewGame(id, word string) *Game {
 }
 
 // ApplyGuess processes a single letter guess.
+// It orchestrates validation, board update, and win/loss detection.
+//
 // Every guess is treated as a normal operation — no duplicate tracking.
 // If the letter is in the word, all occurrences are revealed.
 // If not, guesses_remaining is decremented regardless of whether
 // the same wrong letter was guessed before.
 //
 // The guess rune MUST already be validated as A-Z. Normalisation happens in the handler.
-//
-// Returns an error if:
-//   - The game has already been won or lost
-//   - The guess rune is not A-Z (defensive check)
 func (g *Game) ApplyGuess(guess rune) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if g.Status != StatusInProgress {
-		return fmt.Errorf("game already completed")
+	if err := g.validateInProgress(); err != nil {
+		return err
 	}
-
-	if guess < 'A' || guess > 'Z' {
-		return fmt.Errorf("guess must be a single A-Z character")
+	if err := g.validateRune(guess); err != nil {
+		return err
 	}
-
-	if strings.ContainsRune(g.Word, guess) {
-		// Correct guess — reveal all occurrences
-		runes := []rune(g.Current)
-		wordRunes := []rune(g.Word)
-		for i, ch := range wordRunes {
-			if ch == guess {
-				runes[i] = guess
-			}
-		}
-		g.Current = string(runes)
-
-		// Check win
-		if g.Current == g.Word {
-			g.Status = StatusWon
-		}
+	if g.isCorrectGuess(guess) {
+		g.applyCorrectGuess(guess)
 	} else {
-		// Wrong guess — always decrement, even if guessed before
-		g.GuessesRemaining--
+		g.applyWrongGuess()
+	}
+	return nil
+}
 
-		// Check loss
-		if g.GuessesRemaining <= 0 {
-			g.GuessesRemaining = 0
-			g.Status = StatusLost
+// validateInProgress returns ErrGameCompleted if the game has already ended.
+func (g *Game) validateInProgress() error {
+	if g.Status != StatusInProgress {
+		return ErrGameCompleted
+	}
+	return nil
+}
+
+// validateRune returns ErrInvalidGuess if the rune is not uppercase A-Z.
+func (g *Game) validateRune(guess rune) error {
+	if !LetterRegex.MatchString(string(guess)) {
+		return ErrInvalidGuess
+	}
+	return nil
+}
+
+// isCorrectGuess returns true if the guessed letter appears in the word.
+func (g *Game) isCorrectGuess(guess rune) bool {
+	return strings.ContainsRune(g.Word, guess)
+}
+
+// applyCorrectGuess reveals all occurrences of the guessed letter on the
+// board and checks if the game has been won.
+func (g *Game) applyCorrectGuess(guess rune) {
+	runes := []rune(g.Current)
+	wordRunes := []rune(g.Word)
+	for i, ch := range wordRunes {
+		if ch == guess {
+			runes[i] = guess
 		}
 	}
+	g.Current = string(runes)
 
-	return nil
+	// Check win: all letters revealed
+	if g.Current == g.Word {
+		g.Status = StatusWon
+	}
+}
+
+// applyWrongGuess decrements the remaining guesses and checks if the
+// game has been lost.
+func (g *Game) applyWrongGuess() {
+	g.GuessesRemaining--
+
+	if g.GuessesRemaining <= 0 {
+		g.GuessesRemaining = 0
+		g.Status = StatusLost
+	}
 }
 
 // Snapshot returns a thread-safe copy of the game state for reading

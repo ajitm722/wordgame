@@ -1,9 +1,17 @@
 package words
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+// errReader returns a read error on every call, used to test scanner error handling.
+type errReader struct{}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	return 0, errors.New("read error")
+}
 
 func TestLoadWords_Basic(t *testing.T) {
 	input := strings.NewReader("apple\norange\nbanana\n123abc\nhéllo\n")
@@ -100,5 +108,47 @@ func TestLoadWords_SingleLetter(t *testing.T) {
 		if words[i] != w {
 			t.Errorf("words[%d] = %q, want %q", i, words[i], w)
 		}
+	}
+}
+
+// --- SRP validation tests ---
+
+func TestIsValidWord(t *testing.T) {
+	tests := []struct {
+		word  string
+		valid bool
+	}{
+		{"HELLO", true},
+		{"A", true},
+		{"Z", true},
+		{"APPLE", true},
+		{"BANANA", true},
+		{"", false},
+		{"HEL3O", false},
+		{"HEL-LO", false},
+		{"HÉLLO", false},
+		{"hello", false},
+		{"HELLO ", false},
+		{" HELLO", false},
+	}
+
+	for _, tt := range tests {
+		got := isValidWord(tt.word)
+		if got != tt.valid {
+			t.Errorf("isValidWord(%q) = %v, want %v", tt.word, got, tt.valid)
+		}
+	}
+}
+
+// TestLoadWords_ScannerError verifies that when the underlying reader
+// returns an error (making bufio.Scanner.Err() non-nil), the error is
+// propagated to the caller.
+func TestLoadWords_ScannerError(t *testing.T) {
+	words, err := LoadWords(&errReader{})
+	if err == nil {
+		t.Fatal("expected error from scanner, got nil")
+	}
+	if words != nil {
+		t.Errorf("expected nil words on scanner error, got %d words", len(words))
 	}
 }

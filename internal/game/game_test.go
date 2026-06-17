@@ -1,6 +1,7 @@
 package game
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -198,6 +199,9 @@ func TestApplyGuess_InvalidRune(t *testing.T) {
 	if err := g.ApplyGuess('a'); err == nil {
 		t.Error("expected error for lowercase (should be normalised by handler)")
 	}
+	if err := g.ApplyGuess('Z'); err != nil {
+		t.Error("unexpected error for valid uppercase letter")
+	}
 }
 
 func TestApplyGuess_AlreadyCompleted(t *testing.T) {
@@ -220,22 +224,6 @@ func TestApplyGuess_AlreadyLost(t *testing.T) {
 	}
 }
 
-func TestApplyGuess_RevealsAllOnWin(t *testing.T) {
-	g := NewGame("test-id", "AB")
-	g.Current = "A_"
-
-	err := g.ApplyGuess('B')
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if g.Current != "AB" {
-		t.Errorf("Current = %q, want %q", g.Current, "AB")
-	}
-	if g.Status != StatusWon {
-		t.Errorf("Status should be Won")
-	}
-}
-
 func TestApplyGuess_RepeatWrongLoses(t *testing.T) {
 	// Lose by guessing the same wrong letter 6 times
 	g := NewGame("test-id", "XYZ")
@@ -252,5 +240,167 @@ func TestApplyGuess_RepeatWrongLoses(t *testing.T) {
 	}
 	if g.Status != StatusLost {
 		t.Errorf("Status should be Lost")
+	}
+}
+
+// --- SRP method tests ---
+
+func TestValidateInProgress(t *testing.T) {
+	t.Run("in progress returns nil", func(t *testing.T) {
+		g := NewGame("id", "TEST")
+		if err := g.validateInProgress(); err != nil {
+			t.Errorf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("already won returns error", func(t *testing.T) {
+		g := NewGame("id", "TEST")
+		g.Status = StatusWon
+		if err := g.validateInProgress(); !errors.Is(err, ErrGameCompleted) {
+			t.Errorf("expected ErrGameCompleted, got %v", err)
+		}
+	})
+
+	t.Run("already lost returns error", func(t *testing.T) {
+		g := NewGame("id", "TEST")
+		g.Status = StatusLost
+		if err := g.validateInProgress(); !errors.Is(err, ErrGameCompleted) {
+			t.Errorf("expected ErrGameCompleted, got %v", err)
+		}
+	})
+}
+
+func TestValidateRune(t *testing.T) {
+	g := NewGame("id", "TEST")
+
+	t.Run("valid A-Z", func(t *testing.T) {
+		if err := g.validateRune('M'); err != nil {
+			t.Errorf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("lowercase returns error", func(t *testing.T) {
+		if err := g.validateRune('a'); !errors.Is(err, ErrInvalidGuess) {
+			t.Errorf("expected ErrInvalidGuess, got %v", err)
+		}
+	})
+
+	t.Run("digit returns error", func(t *testing.T) {
+		if err := g.validateRune('5'); !errors.Is(err, ErrInvalidGuess) {
+			t.Errorf("expected ErrInvalidGuess, got %v", err)
+		}
+	})
+
+	t.Run("special char returns error", func(t *testing.T) {
+		if err := g.validateRune('@'); !errors.Is(err, ErrInvalidGuess) {
+			t.Errorf("expected ErrInvalidGuess, got %v", err)
+		}
+	})
+
+	t.Run("non-ASCII returns error", func(t *testing.T) {
+		if err := g.validateRune('é'); !errors.Is(err, ErrInvalidGuess) {
+			t.Errorf("expected ErrInvalidGuess, got %v", err)
+		}
+	})
+}
+
+func TestIsCorrectGuess(t *testing.T) {
+	g := NewGame("id", "BANANA")
+
+	t.Run("letter in word", func(t *testing.T) {
+		if !g.isCorrectGuess('A') {
+			t.Error("expected true for 'A' in BANANA")
+		}
+	})
+
+	t.Run("letter not in word", func(t *testing.T) {
+		if g.isCorrectGuess('Z') {
+			t.Error("expected false for 'Z' not in BANANA")
+		}
+	})
+
+	t.Run("single-letter word correct", func(t *testing.T) {
+		g2 := NewGame("id", "X")
+		if !g2.isCorrectGuess('X') {
+			t.Error("expected true for 'X' in 'X'")
+		}
+	})
+}
+
+func TestApplyCorrectGuess(t *testing.T) {
+	t.Run("reveals letter on board", func(t *testing.T) {
+		g := NewGame("id", "APPLE")
+		g.applyCorrectGuess('P')
+		if g.Current != "_PP__" {
+			t.Errorf("Current = %q, want %q", g.Current, "_PP__")
+		}
+		if g.Status != StatusInProgress {
+			t.Errorf("should still be in progress after partial reveal")
+		}
+	})
+
+	t.Run("wins when fully revealed", func(t *testing.T) {
+		g := NewGame("id", "AB")
+		g.Current = "A_"
+		g.applyCorrectGuess('B')
+		if g.Current != "AB" {
+			t.Errorf("Current = %q, want %q", g.Current, "AB")
+		}
+		if g.Status != StatusWon {
+			t.Errorf("Status should be Won, got %d", g.Status)
+		}
+	})
+}
+
+func TestApplyWrongGuess(t *testing.T) {
+	t.Run("decrements remaining", func(t *testing.T) {
+		g := NewGame("id", "APPLE")
+		g.applyWrongGuess()
+		if g.GuessesRemaining != 5 {
+			t.Errorf("GuessesRemaining = %d, want 5", g.GuessesRemaining)
+		}
+		if g.Status != StatusInProgress {
+			t.Errorf("should still be in progress")
+		}
+	})
+
+	t.Run("loses when zero remaining", func(t *testing.T) {
+		g := NewGame("id", "APPLE")
+		g.GuessesRemaining = 1
+		g.applyWrongGuess()
+		if g.GuessesRemaining != 0 {
+			t.Errorf("GuessesRemaining = %d, want 0", g.GuessesRemaining)
+		}
+		if g.Status != StatusLost {
+			t.Errorf("Status should be Lost, got %d", g.Status)
+		}
+	})
+
+	t.Run("caps at zero", func(t *testing.T) {
+		g := NewGame("id", "APPLE")
+		g.GuessesRemaining = 0
+		g.applyWrongGuess()
+		if g.GuessesRemaining != 0 {
+			t.Errorf("GuessesRemaining = %d, want 0 (should not go negative)", g.GuessesRemaining)
+		}
+		if g.Status != StatusLost {
+			t.Errorf("Status should be Lost, got %d", g.Status)
+		}
+	})
+}
+
+func TestSnapshot(t *testing.T) {
+	g := NewGame("test-id", "APPLE")
+	g.ApplyGuess('P')
+
+	snap := g.Snapshot()
+	if snap.Current != "_PP__" {
+		t.Errorf("snapshot Current = %q, want %q", snap.Current, "_PP__")
+	}
+	if snap.GuessesRemaining != 6 {
+		t.Errorf("snapshot GuessesRemaining = %d, want 6", snap.GuessesRemaining)
+	}
+	if snap.Status != StatusInProgress {
+		t.Errorf("snapshot Status should be InProgress")
 	}
 }

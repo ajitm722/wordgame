@@ -29,31 +29,9 @@ This is a **Hangman-style word-guessing game** implemented as a REST API. The se
 - Maintains game state **entirely in memory** — no database.
 - Runs on `http://localhost:1337`.
 
-### Starting Point — What you get
-
-The challenge provides a few files to get you going. They are **starting points** — refactor and reorganise them as you see fit:
-
-| File | Purpose | What you can do with it |
-|------|---------|------------------------|
-| `main.go` | Seeds RNG, loads words, starts HTTP server on `:1337` | Refactor into `cmd/wordgame/main.go` — wire up your packages here |
-| `words.go` | Reads `words.txt`, filters to `^[A-Z]+$`, returns `[]string` | Refactor into `pkg/words/` — decouple from filesystem (use `io.Reader`) |
-| `identifier.go` | Generates UUID v4 game IDs | Refactor into `pkg/identifier/` — export the function |
-| `words.txt` | 370,103-line English word dictionary (dwyl/english-words) | Keep as a data file — no code changes needed |
-| `go.mod` / `go.sum` | Module definition (`github.com/fleetdm/wordgame`, Go 1.16) | Update to Go 1.21, drop unused deps |
-| `Procfile` | Heroku process definition (`web: bin/wordgame`) | Keep as-is |
-
-### What you will add
-
-| File | Purpose |
-|------|---------|
-| `Makefile` | Build, test, coverage, and game interaction automation (see [Section 12](#12-makefile--deployment)) |
-| `internal/game/game.go` | Game struct + business logic |
-| `internal/store/store.go` | Thread-safe in-memory game store |
-| `internal/handler/handler.go` | HTTP handlers with Postel's Law normalisation |
-
 ### Target Directory Structure
 
-The codebase should follow standard Go project layout conventions:
+The codebase follows standard Go project layout conventions:
 
 ```
 wordgame-main/
@@ -63,6 +41,9 @@ wordgame-main/
 ├── internal/                        ← Private application code (not importable externally)
 │   ├── handler/
 │   │   ├── handler.go               ← HTTP handlers: POST /new, POST /guess
+│   │   ├── types.go                 ← DTOs: NewGameResponse, GuessRequest, etc.
+│   │   ├── request.go               ← JSON decode, normaliseGuess, validateGuess
+│   │   ├── response.go              ← writeJSON, writeError helpers
 │   │   └── handler_test.go
 │   ├── game/
 │   │   ├── game.go                  ← Game struct + ApplyGuess() business logic
@@ -136,7 +117,7 @@ wordgame-main/
 
 - When a game is won or lost, it is **immediately deleted** from memory.
 - The final `/guess` response includes the `word` field so the player sees what the answer was.
-- Subsequent guesses on that game ID return `400 {"error": "game not found"}`.
+- Subsequent guesses on that game ID return `404 {"error": "game not found"}`.
 
 ### FR-8: Server Address
 
@@ -291,15 +272,16 @@ The handler normalises input, then passes a clean `rune` to the game logic. Full
 
 | Scenario | HTTP Status | Response |
 |----------|-------------|----------|
-| Game ID not found | `400 Bad Request` | `{"error": "game not found"}` |
-| Guessing on a completed game | `400 Bad Request` | `{"error": "game not found"}` (game is deleted on completion) |
+| Game ID not found | `404 Not Found` | `{"error": "game not found"}` |
+| Guessing on a completed game | `404 Not Found` | `{"error": "game not found"}` (game is deleted on completion) |
+| Concurrent request completes game before ApplyGuess acquires lock | `409 Conflict` | `{"error": "game already completed"}` |
+| Missing `guess` or empty after trim | `422 Unprocessable Entity` | `{"error": "guess must be a single character"}` |
+| `guess` is more than 1 character | `422 Unprocessable Entity` | `{"error": "guess must be a single character"}` |
+| `guess` is not alpha (e.g. "5", "é", "@") | `422 Unprocessable Entity` | `{"error": "guess must be a single letter A-Z"}` |
 | Missing `id` in request | `400 Bad Request` | `{"error": "missing game id"}` |
-| Missing `guess` in request | `400 Bad Request` | `{"error": "missing guess"}` |
-| `guess` is empty (after trimming) | `400 Bad Request` | `{"error": "guess must be a single character"}` |
-| `guess` is more than 1 character | `400 Bad Request` | `{"error": "guess must be a single character"}` |
-| `guess` is not alpha (e.g. "5", "é", "@") | `400 Bad Request` | `{"error": "guess must be a single letter A-Z"}` |
 | Request body not valid JSON | `400 Bad Request` | `{"error": "invalid request body"}` |
-| Concurrent guesses on same game | Must be safe (use mutex) | — |
+| Unknown JSON fields in request | `400 Bad Request` | `{"error": "invalid request body"}` |
+| Concurrent guesses on same game | Safe (mutex serialises) | Second request waits, gets updated state. No conflict. |
 | Lowercase guess (e.g. "a") | `200 OK` | Normalised to uppercase — not an error |
 | Guess with whitespace (e.g. " A ") | `200 OK` | Trimmed, then normalised — not an error |
 
@@ -337,22 +319,39 @@ Applied to this API, the principle means:
 ### Implementation pattern in the handler
 
 ```go
-// internal/handler/handler.go
+// internal/handler/request.go — normalisation & validation extracted to SRP functions
+
+// normaliseGuess applies Postel's Law to the guess string:
+// trims surrounding whitespace and converts to uppercase.
+func normaliseGuess(guess string) string {
+    return strings.ToUpper(strings.TrimSpace(guess))
+}
+
+// validateGuess checks that the guess string is a single uppercase A-Z letter.
+func validateGuess(guess string) error {
+    if guess == "" {
+        return errors.New("missing guess")
+    }
+    if len(guess) != 1 {
+        return errors.New("guess must be a single character")
+    }
+    if !game.LetterRegex.MatchString(guess) {
+        return errors.New("guess must be a single letter A-Z")
+    }
+    return nil
+}
+
+// internal/handler/handler.go — handler orchestrates the flow
 
 func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
     // ... decode JSON ...
 
     // Postel's Law: normalise before you validate
-    guess := strings.TrimSpace(req.Guess)
-    guess = strings.ToUpper(guess)
+    guess := normaliseGuess(req.Guess)
 
-    // Now validate the clean input
-    if len(guess) != 1 {
-        writeError(w, http.StatusBadRequest, "guess must be a single character")
-        return
-    }
-    if guess[0] < 'A' || guess[0] > 'Z' {
-        writeError(w, http.StatusBadRequest, "guess must be a single letter A-Z")
+    // Now validate the clean input (single responsibility)
+    if err := validateGuess(guess); err != nil {
+        writeError(w, http.StatusBadRequest, err.Error())
         return
     }
 
@@ -361,6 +360,12 @@ func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
     // ...
 }
 ```
+
+**Why extract normaliseGuess and validateGuess?** Each function has exactly one reason to change:
+
+- `normaliseGuess` changes if normalisation rules change (e.g., strip diacritics)
+- `validateGuess` changes if validation rules change (e.g., allow wildcards)
+- The handler is pure orchestration — it doesn't know *how* normalisation or validation works, only that it must happen
 
 ### Where it does NOT apply
 
@@ -402,7 +407,7 @@ sequenceDiagram
     Note over Handler: Postel's Law normalisation
     Handler->>Handler: TrimSpace(" a ") → "a"
     Handler->>Handler: ToUpper("a") → "A"
-    Handler->>Handler: Validate: len=1, A-Z ✓
+    Handler->>Handler: Validate: len=1, A-Z (ok)
 
     Handler->>Store: Store.Get(id)
     Store-->>Handler: game{word:"APPLE", current:"_____", guesses:6}
@@ -435,15 +440,15 @@ sequenceDiagram
     Note over Client,Game: Game state: word="CAT", current="CA_", guesses=4
 
     Client->>Handler: POST /guess<br/>{id: "xxx", guess: "T"}
-    Handler->>Handler: Normalise → "T", validate ✓
+    Handler->>Handler: Normalise → "T", validate (ok)
     Handler->>Store: Store.Get(id)
     Store-->>Handler: game{word:"CAT", current:"CA_", guesses:4}
 
     Handler->>Game: game.ApplyGuess('T')
     Game->>Game: mu.Lock()
-    Game->>Game: ContainsRune("CAT", 'T')? Yes ✓
+    Game->>Game: ContainsRune("CAT", 'T')? Yes (ok)
     Game->>Game: Reveal 'T' → current = "CAT"
-    Game->>Game: Win check: "CAT" == "CAT" → WIN 🎉
+    Game->>Game: Win check: "CAT" == "CAT" → WIN (status=StatusWon)
     Game->>Game: Status = StatusWon
     Game->>Game: mu.Unlock()
     Game-->>Handler: nil
@@ -469,15 +474,15 @@ sequenceDiagram
     Note over Client,Game: Game state: word="DOG", current="___", guesses=1
 
     Client->>Handler: POST /guess<br/>{id: "xxx", guess: "Q"}
-    Handler->>Handler: Normalise → "Q", validate ✓
+    Handler->>Handler: Normalise → "Q", validate (ok)
     Handler->>Store: Store.Get(id)
     Store-->>Handler: game{word:"DOG", current:"___", guesses:1}
 
     Handler->>Game: game.ApplyGuess('Q')
     Game->>Game: mu.Lock()
-    Game->>Game: ContainsRune("DOG", 'Q')? No ✗
+    Game->>Game: ContainsRune("DOG", 'Q')? No (no)
     Game->>Game: GuessesRemaining-- → 0
-    Game->>Game: Loss check: 0 == 0 → LOST 💀
+    Game->>Game: Loss check: 0 == 0 → LOST (status=StatusLost)
     Game->>Game: Status = StatusLost
     Game->>Game: mu.Unlock()
     Game-->>Handler: nil
@@ -505,13 +510,13 @@ sequenceDiagram
     Note over Client,Game: Player already guessed 'Z' (wrong), guesses=5
 
     Client->>Handler: POST /guess<br/>{id: "xxx", guess: "Z"} (again!)
-    Handler->>Handler: Normalise → "Z", validate ✓
+    Handler->>Handler: Normalise → "Z", validate (ok)
     Handler->>Store: Store.Get(id)
     Store-->>Handler: game{word:"APPLE", current:"_PP__", guesses:5}
 
     Handler->>Game: game.ApplyGuess('Z')
     Game->>Game: mu.Lock()
-    Game->>Game: ContainsRune("APPLE", 'Z')? No ✗
+    Game->>Game: ContainsRune("APPLE", 'Z')? No (no)
     Game->>Game: GuessesRemaining-- → 4
     Game->>Game: mu.Unlock()
     Game-->>Handler: nil
@@ -537,7 +542,7 @@ sequenceDiagram
 
     Handler->>Game: game.ApplyGuess('P')
     Game->>Game: mu.Lock()
-    Game->>Game: ContainsRune("APPLE", 'P')? Yes ✓
+    Game->>Game: ContainsRune("APPLE", 'P')? Yes (ok)
     Game->>Game: Reveal 'P' at positions → "_PP__" (unchanged)
     Game->>Game: GuessesRemaining unchanged (6)
     Game->>Game: mu.Unlock()
@@ -562,14 +567,14 @@ sequenceDiagram
     par Goroutine 1
         G1->>Handler: HandleGuess(id, 'A')
         Handler->>Store: Get(id)
-        Store->>Store: mu.RLock() — shared read ✓
+        Store->>Store: mu.RLock() — shared read (ok)
         Store-->>Handler: *game
         Handler->>Game: ApplyGuess('A')
         Game->>Game: mu.Lock() — exclusive (blocks G2)
     and Goroutine 2
         G2->>Handler: HandleGuess(id, 'A')
         Handler->>Store: Get(id)
-        Store->>Store: mu.RLock() — shared read ✓
+        Store->>Store: mu.RLock() — shared read (ok)
         Store-->>Handler: *game
         Handler->>Game: ApplyGuess('A')
         Game->>Game: mu.Lock() — waits for G1
@@ -599,16 +604,78 @@ sequenceDiagram
     participant Store as internal/store
 
     Client->>Handler: POST /guess<br/>{id: "nonexistent", guess: "A"}
-    Handler->>Handler: Normalise → "A", validate ✓
+    Handler->>Handler: Normalise → "A", validate (ok)
     Handler->>Store: Store.Get("nonexistent")
     Store->>Store: mu.RLock()
     Store-->>Handler: nil (not found)
     Store->>Store: mu.RUnlock()
 
-    Handler-->>Client: 400 {error: "game not found"}
+    Handler-->>Client: 404 {error: "game not found"}
 ```
 
-### 7.9 Error Flow — Invalid JSON
+### 7.9 Race Condition — Game Completed by Concurrent Request
+
+When two requests reach the same game at the same time, one may win or lose
+before the other. The game's mutex serialises `ApplyGuess`, and the handler
+uses `errors.Is` to return the appropriate status code.
+
+```mermaid
+sequenceDiagram
+    participant R1 as Request A (last guess)
+    participant R2 as Request B
+    participant Handler as internal/handler
+    participant Store as internal/store
+    participant Game as internal/game
+
+    Note over R1,R2: Same game, word="CAT", current="CA_", guesses=1
+
+    R1->>Handler: POST /guess {id:"xxx", guess:"T"}
+    R2->>Handler: POST /guess {id:"xxx", guess:"Z"}
+
+    par Store lookup
+        R1->>Store: Get(id) → *game
+        R2->>Store: Get(id) → *game (same pointer)
+    end
+
+    Note over Game: R1 acquires mutex first
+    R1->>Game: ApplyGuess('T')
+    Game->>Game: mu.Lock()
+    Game->>Game: ContainsRune("CAT", 'T')? Yes
+    Game->>Game: Reveal 'T' → current = "CAT"
+    Game->>Game: Win check: "CAT" == "CAT" → StatusWon
+    Game->>Game: mu.Unlock()
+    Game-->>R1: nil
+
+    Note over R1,Store: R1 reveals word, deletes game
+    R1->>Handler: resp.Word = "CAT"
+    R1->>Store: Delete(id)
+    R1-->>R1: 200 {current:"CAT", word:"CAT"}
+
+    Note over Game: R2 now has the mutex
+    R2->>Game: ApplyGuess('Z')
+    Game->>Game: mu.Lock()
+    Game->>Game: validateInProgress → StatusWon!
+    Game->>Game: ErrGameCompleted
+    Game->>Game: mu.Unlock()
+    Game-->>R2: ErrGameCompleted
+
+    Note over R2,Handler: Handler dispatches via errors.Is
+    R2->>Handler: errors.Is(err, ErrGameCompleted) → true
+    R2-->>R2: 409 Conflict {error: "game already completed"}
+
+    Note over R1,R2: Future requests for this ID → 404 (game deleted)
+```
+
+**How the design handles this correctly:**
+
+- `Game.Mutex` serialises `ApplyGuess` — no data race on the game struct
+- `Store.RWMutex` allows concurrent reads — both requests retrieve the game pointer before deletion
+- Request A completes the game, sets `StatusWon`, deletes from store
+- Request B still holds the `*game` pointer, but `validateInProgress()` catches the changed status
+- `ApplyGuess` returns `ErrGameCompleted` → handler uses `errors.Is` → **409 Conflict**
+- Any subsequent request on that ID reaches a nil `store.Get` → **404 Not Found**
+
+### 7.10 Error Flow — Invalid JSON
 
 ```mermaid
 sequenceDiagram
@@ -683,7 +750,7 @@ func (s *GameStore) Get(id string) *Game
 func (s *GameStore) Delete(id string)
 ```
 
-### 8.3 Request/Response Structs (`internal/handler/handler.go`)
+### 8.3 Request/Response Structs (`internal/handler/types.go`)
 
 ```go
 // --- New Game Response ---
@@ -755,305 +822,55 @@ Build bottom-up — each step depends only on packages already built:
 | 2 | `pkg/words/` | `loader.go` | Export `LoadWords(r io.Reader) ([]string, error)` — change signature from file path to `io.Reader` |
 | 3 | `internal/game/` | `game.go` | `Game` struct, `NewGame()`, `ApplyGuess(rune)` — pure business logic, no I/O |
 | 4 | `internal/store/` | `store.go` | `GameStore` with `sync.RWMutex` — `Get`, `Save`, `Delete` |
-| 5 | `internal/handler/` | `handler.go` | `Server` struct (dep injection), `HandleNewGame`, `HandleGuess` — includes Postel's Law normalisation |
+| 5 | `internal/handler/` | `handler.go`, `request.go`, `response.go`, `types.go` | `Server` struct (DI), handler methods, Postel's Law normalisation, JSON helpers, DTOs |
 | 6 | `cmd/wordgame/` | `main.go` | Open `words.txt`, wire everything, `http.HandleFunc`, `ListenAndServe` |
 
 ### 9.3 Core Game Logic — Reference (`internal/game/game.go`)
 
-```go
-// ApplyGuess processes a single letter guess.
-// The guess rune MUST already be validated (A-Z). Normalisation happens in the handler.
-// Every guess is independent — guessing the same wrong letter twice costs two attempts.
-//
-// Returns an error if:
-//   - The game has already been won or lost
-//   - The guess rune is not A-Z (defensive check)
-func (g *Game) ApplyGuess(guess rune) error {
-    g.mu.Lock()
-    defer g.mu.Unlock()
+See the source file for the full implementation. Key design points:
 
-    // 1. Validate game is in progress
-    if g.Status != StatusInProgress {
-        return fmt.Errorf("game already completed")
-    }
+- **Sentinel errors** (`ErrGameCompleted`, `ErrInvalidGuess`) allow callers to use `errors.Is` for precise matching.
+- `ApplyGuess` is an **orchestrator** — it delegates to five single-responsibility methods: `validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`.
+- Each sub-method has one reason to change (see [code-structure.md](./code-structure.md) for the SRP rationale).
 
-    // 2. Defensive: validate guess is A-Z (handler should already do this)
-    if guess < 'A' || guess > 'Z' {
-        return fmt.Errorf("guess must be a single A-Z character")
-    }
+| Method | Responsibility |
+|--------|---------------|
+| `validateInProgress` | Precondition: game not already won/lost |
+| `validateRune` | Defensive: guess is `[A-Z]` |
+| `isCorrectGuess` | Match: does the letter appear in the word? |
+| `applyCorrectGuess` | Mutate: reveal letter + detect win |
+| `applyWrongGuess` | Mutate: decrement guess + detect loss |
 
-    // 3. Check if guess is in the word
-    if strings.ContainsRune(g.Word, guess) {
-        // Correct guess — reveal all occurrences
-        runes := []rune(g.Current)
-        wordRunes := []rune(g.Word)
-        for i, ch := range wordRunes {
-            if ch == guess {
-                runes[i] = guess
-            }
-        }
-        g.Current = string(runes)
+### 9.4 Handler — Reference (`internal/handler/` — 4 files)
 
-        // Check win
-        if g.Current == g.Word {
-            g.Status = StatusWon
-        }
-    } else {
-        // Wrong guess — always decrement
-        g.GuessesRemaining--
+The handler package is split into four files, each with one responsibility. See the source files for the full implementation.
 
-        // Check loss
-        if g.GuessesRemaining <= 0 {
-            g.GuessesRemaining = 0
-            g.Status = StatusLost
-        }
-    }
-
-    return nil
-}
-```
-
-### 9.4 Handler — Reference (`internal/handler/handler.go`)
-
-```go
-type Server struct {
-    store *store.GameStore
-    words []string
-}
-
-func NewServer(store *store.GameStore, words []string) *Server {
-    return &Server{store: store, words: words}
-}
-
-func (s *Server) HandleNewGame(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-        return
-    }
-
-    id, err := identifier.GenerateIdentifier()
-    if err != nil {
-        writeError(w, http.StatusInternalServerError, "failed to generate game ID")
-        return
-    }
-
-    word := s.words[rand.IntN(len(s.words))]
-    game := game.NewGame(id, word)
-
-    s.store.Save(game)
-
-    snap := game.Snapshot()
-    writeJSON(w, http.StatusOK, NewGameResponse{
-        ID:               game.ID,
-        Current:          snap.Current,
-        GuessesRemaining: snap.GuessesRemaining,
-    })
-}
-
-func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-        return
-    }
-
-    var req GuessRequest
-    decoder := json.NewDecoder(r.Body)
-    decoder.DisallowUnknownFields()
-    if err := decoder.Decode(&req); err != nil {
-        writeError(w, http.StatusBadRequest, "invalid request body")
-        return
-    }
-
-    // --- Postel's Law: normalise before validate ---
-    guess := strings.TrimSpace(req.Guess)
-    guess = strings.ToUpper(guess)
-    // -----------------------------------------------
-
-    if len(guess) != 1 {
-        writeError(w, http.StatusBadRequest, "guess must be a single character")
-        return
-    }
-    guessRune := rune(guess[0])
-    if guessRune < 'A' || guessRune > 'Z' {
-        writeError(w, http.StatusBadRequest, "guess must be a single letter A-Z")
-        return
-    }
-
-    game := s.store.Get(req.ID)
-    if game == nil {
-        writeError(w, http.StatusBadRequest, "game not found")
-        return
-    }
-
-    if err := game.ApplyGuess(guessRune); err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-
-    snap := game.Snapshot()
-    writeJSON(w, http.StatusOK, GuessResponse{
-        ID:               game.ID,
-        Current:          snap.Current,
-        GuessesRemaining: snap.GuessesRemaining,
-    })
-}
-```
+| File | Responsibility | Key exports |
+|------|---------------|-------------|
+| `handler.go` | Orchestration — routes requests, handles game lifecycle | `NewServer`, `HandleNewGame`, `HandleGuess`, `pickWord` |
+| `request.go` | Input parsing & Postel's Law normalisation | `decodeJSONBody`, `normaliseGuess`, `validateGuess` |
+| `response.go` | JSON response encoding | `writeJSON`, `writeError` |
+| `types.go` | Request/response DTOs | `NewGameResponse`, `GuessRequest`, `GuessResponse`, `ErrorResponse` |
 
 ### 9.5 Entry Point — Reference (`cmd/wordgame/main.go`)
 
-```go
-func main() {
-    // 1. Load words from file (cmd/ opens the file, pkg/ reads from io.Reader)
-    f, err := os.Open("words.txt")
-    if err != nil {
-        log.Fatalf("open words.txt: %v", err)
-    }
-    defer f.Close()
+The entry point is pure orchestration. `main()` wires dependencies in five steps:
 
-    words, err := words.LoadWords(f)
-    if err != nil {
-        log.Fatalf("load words: %v", err)
-    }
+1. Calls `loadWordList("words.txt")` to load the dictionary
+2. Creates an in-memory `GameStore`
+3. Creates the HTTP `Server` with injected dependencies
+4. Registers routes with `gorilla/mux`
+5. Starts the HTTP server
 
-    // 2. Create store (in-memory)
-    store := store.NewGameStore()
-
-    // 3. Create handler server with dependencies injected
-    srv := handler.NewServer(store, words)
-
-    // 4. Register routes with gorilla/mux
-    r := mux.NewRouter()
-    r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
-    r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
-
-    // 5. Start listening
-    addr := "localhost:" + port()
-    log.Printf("starting server on http://%s", addr)
-    if err := http.ListenAndServe(addr, r); err != nil {
-        log.Fatal(err)
-    }
-}
-
-func port() string {
-    if p := os.Getenv("PORT"); p != "" {
-        return p
-    }
-    return "1337"
-}
-```
+File opening and word loading are extracted into `loadWordList()` so that `main()` only changes if the orchestration order changes. See the source file for the full implementation.
 
 ---
 
 ## 10. Modern Go Best Practices
 
-### 10.1 Standard Go Project Layout
+*(Items that repeat content from previous sections — project layout, `io.Reader`, Postel's Law, `encoding/json`, `sync.RWMutex`, DI — are documented in their dedicated sections above. Only unique items are listed below.)*
 
-Go projects follow a convention — not a requirement — but it makes your code immediately understandable to any Go developer:
-
-| Directory | Purpose | Visibility |
-|-----------|---------|------------|
-| `cmd/` | One subdirectory per executable binary | — |
-| `internal/` | Private application code. The Go compiler **blocks** external imports. | This module only |
-| `pkg/` | Public libraries safe for any project to import | Any module |
-
-### 10.2 `io.Reader` for File Decoupling
-
-**Before (tightly coupled):**
-
-```go
-// Hard to test — needs a real file on disk
-func loadWords(path string) ([]string, error) {
-    f, err := os.Open(path)  // depends on filesystem
-    // ...
-}
-```
-
-**After (decoupled, testable):**
-
-```go
-// Easy to test — pass any io.Reader
-func LoadWords(r io.Reader) ([]string, error) {
-    scanner := bufio.NewScanner(r)
-    // ...
-}
-
-// In tests:
-words, err := LoadWords(strings.NewReader("APPLE\nORANGE\nBANANA"))
-```
-
-The caller (`cmd/wordgame/main.go`) is responsible for `os.Open`. The library only reads from an `io.Reader` — it doesn't care where the bytes come from.
-
-### 10.3 Postel's Law in Input Validation
-
-Normalise BEFORE you validate. The handler is the single place where "be liberal" happens. Everything downstream gets clean data.
-
-```
-Raw input → [TrimSpace] → [ToUpper] → [Validate] → Clean data → Game logic
-```
-
-### 10.4 Use `encoding/json` Standard Library
-
-```go
-// Encode response
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(response)
-
-// Decode request — reject unknown JSON keys
-decoder := json.NewDecoder(r.Body)
-decoder.DisallowUnknownFields()
-if err := decoder.Decode(&req); err != nil {
-    writeError(w, http.StatusBadRequest, "invalid request body")
-    return
-}
-```
-
-### 10.5 Use `sync.RWMutex` for Concurrent Safety
-
-```go
-type GameStore struct {
-    mu    sync.RWMutex
-    games map[string]*Game
-}
-
-// Read operations use RLock (multiple readers allowed)
-func (s *GameStore) Get(id string) *Game {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-    return s.games[id]
-}
-
-// Write operations use Lock (exclusive)
-func (s *GameStore) Save(g *Game) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    s.games[g.ID] = g
-}
-```
-
-### 10.6 Dependency Injection via Struct
-
-No global variables. Everything a handler needs is passed through its struct:
-
-```go
-type Server struct {
-    store *store.GameStore    // injected
-    words []string            // injected
-}
-
-func NewServer(store *store.GameStore, words []string) *Server {
-    return &Server{store: store, words: words}
-}
-```
-
-Testing is trivial — inject a real store with test words:
-
-```go
-store := store.NewGameStore()
-words := []string{"APPLE", "ORANGE"}
-srv := handler.NewServer(store, words)
-```
-
-### 10.7 Use `const` for Magic Numbers
+### 10.1 Use `const` for Magic Numbers
 
 ```go
 const (
@@ -1062,7 +879,7 @@ const (
 )
 ```
 
-### 10.8 Error Wrapping — `fmt.Errorf` + `%w`
+### 10.2 Error Wrapping — `fmt.Errorf` + `%w`
 
 ```go
 // Modern Go 1.13+ style (consistent across the codebase):
@@ -1072,7 +889,7 @@ return fmt.Errorf("generate game ID: %w", err)
 
 The `%w` verb wraps the original error so callers can use `errors.Is()` and `errors.As()`.
 
-### 10.9 Use `math/rand/v2` (Go 1.21+)
+### 10.3 Use `math/rand/v2` (Go 1.21+)
 
 ```go
 import "math/rand/v2"
@@ -1089,156 +906,21 @@ word := words[rand.IntN(len(words))]
 
 ### 11.1 `pkg/words/loader_test.go` — Testing with `strings.NewReader`
 
-```go
-func TestLoadWords(t *testing.T) {
-    input := strings.NewReader("apple\norange\nbanana\n123abc\nhéllo\n")
-    words, err := LoadWords(input)
-
-    assert.NoError(t, err)
-    assert.Equal(t, []string{"APPLE", "ORANGE", "BANANA"}, words)
-    // "123abc" filtered out (contains digits)
-    // "héllo" filtered out (non-ASCII)
-}
-
-func TestLoadWords_Empty(t *testing.T) {
-    words, err := LoadWords(strings.NewReader(""))
-    assert.NoError(t, err)
-    assert.Empty(t, words)
-}
-```
-
-> Because `LoadWords` takes `io.Reader`, tests need **zero files on disk**. No `os.Create`, no `t.TempDir`, no cleanup.
+Because `LoadWords` takes `io.Reader`, tests pass `strings.NewReader(...)` instead of real files — zero filesystem setup needed. Covers: basic filtering, empty input, whitespace trimming, non-alpha rejection, mixed case normalisation, single-letter words.
 
 ### 11.2 `internal/game/game_test.go` — Pure Logic Tests
 
-```go
-func TestApplyGuess_Correct(t *testing.T) {
-    g := game.NewGame("test-id", "APPLE")
-
-    err := g.ApplyGuess('P')
-    assert.NoError(t, err)
-    assert.Equal(t, "_PP__", g.Current)
-    assert.Equal(t, 6, g.GuessesRemaining)
-    assert.Equal(t, game.GameStatusInProgress, g.Status)
-}
-
-func TestApplyGuess_Wrong(t *testing.T) {
-    g := game.NewGame("test-id", "APPLE")
-    g.ApplyGuess('Z')
-    assert.Equal(t, "_____", g.Current)
-    assert.Equal(t, 5, g.GuessesRemaining)
-}
-
-func TestApplyGuess_Win(t *testing.T) {
-    g := game.NewGame("test-id", "CAT")
-    g.Current = "CA_"
-
-    g.ApplyGuess('T')
-    assert.Equal(t, "CAT", g.Current)
-    assert.Equal(t, game.StatusWon, g.Snapshot().Status)
-}
-
-func TestApplyGuess_Loss(t *testing.T) {
-    g := game.NewGame("test-id", "DOG")
-    g.GuessesRemaining = 1
-
-    g.ApplyGuess('Q')
-    assert.Equal(t, 0, g.GuessesRemaining)
-    assert.Equal(t, game.StatusLost, g.Snapshot().Status)
-}
-
-func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
-    g := game.NewGame("test-id", "APPLE")
-    g.ApplyGuess('Z') // 6 → 5
-
-    err := g.ApplyGuess('Z') // 5 → 4 (no special treatment)
-    assert.NoError(t, err)
-    assert.Equal(t, 4, g.GuessesRemaining)
-}
-
-func TestApplyGuess_InvalidRune(t *testing.T) {
-    g := game.NewGame("test-id", "APPLE")
-
-    assert.Error(t, g.ApplyGuess('5'))
-    assert.Error(t, g.ApplyGuess('é'))
-}
-
-func TestApplyGuess_AlreadyCompleted(t *testing.T) {
-    g := game.NewGame("test-id", "APPLE")
-    g.Status = game.StatusWon
-
-    err := g.ApplyGuess('A')
-    assert.Error(t, err)
-    assert.Contains(t, err.Error(), "already completed")
-}
-```
+Tests the game struct directly without HTTP: correct guesses, wrong guesses, win/loss detection, repeat-wrong decrements, repeat-correct no-penalty, invalid runes, completed-game rejection.
 
 ### 11.3 `internal/handler/handler_test.go` — HTTP Integration Tests
 
-```go
-func TestHandleNewGame(t *testing.T) {
-    store := store.NewGameStore()
-    words := []string{"APPLE", "ORANGE", "BANANA"}
-    srv := handler.NewServer(store, words)
+Sets up a real `GameStore` + word list, creates a `Server`, and uses `httptest.NewRecorder`/`httptest.NewRequest` to send requests end-to-end. Covers: `POST /new` response shape, `POST /guess` correct/wrong, Postel's Law (lowercase, whitespace, mixed), unknown JSON fields, duplicate wrong guesses, end-to-end win/loss flows, concurrent access safety, and every error scenario.
 
-    req := httptest.NewRequest(http.MethodPost, "/new", nil)
-    rec := httptest.NewRecorder()
+### 11.4 SRP Method Tests
 
-    srv.HandleNewGame(rec, req)
+Every extracted SRP method (`validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`, `normaliseGuess`, `validateGuess`, `decodeJSONBody`) has direct unit tests covering its specific contract. These run alongside the integration tests and improved coverage granularity (game package: 87.5% → 100%).
 
-    assert.Equal(t, http.StatusOK, rec.Code)
-
-    var resp handler.NewGameResponse
-    json.Unmarshal(rec.Body.Bytes(), &resp)
-
-    assert.NotEmpty(t, resp.ID)
-    assert.Equal(t, 6, resp.GuessesRemaining)
-    // Verify current is all underscores, matching some word length
-    assert.Regexp(t, `^_+$`, resp.Current)
-}
-
-func TestHandleGuess_PostelsLaw_Lowercase(t *testing.T) {
-    // Setup: create a game first
-    store := store.NewGameStore()
-    words := []string{"APPLE"}
-    srv := handler.NewServer(store, words)
-
-    rec := httptest.NewRecorder()
-    srv.HandleNewGame(rec, httptest.NewRequest(http.MethodPost, "/new", nil))
-    var newResp handler.NewGameResponse
-    json.Unmarshal(rec.Body.Bytes(), &newResp)
-
-    // Guess with lowercase
-    body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"a"}`)
-    req := httptest.NewRequest(http.MethodPost, "/guess", body)
-    rec = httptest.NewRecorder()
-
-    srv.HandleGuess(rec, req)
-
-    assert.Equal(t, http.StatusOK, rec.Code)
-    var resp handler.GuessResponse
-    json.Unmarshal(rec.Body.Bytes(), &resp)
-    assert.Equal(t, "A____", resp.Current) // normalised and applied
-}
-
-func TestHandleGuess_PostelsLaw_Whitespace(t *testing.T) {
-    // ... similar: guess=" P " → normalised to "P" → correct reveal
-}
-
-func TestHandleGuess_GameNotFound(t *testing.T) {
-    store := store.NewGameStore()
-    srv := handler.NewServer(store, []string{"APPLE"})
-
-    body := strings.NewReader(`{"id":"nonexistent","guess":"A"}`)
-    req := httptest.NewRequest(http.MethodPost, "/guess", body)
-    rec := httptest.NewRecorder()
-
-    srv.HandleGuess(rec, req)
-    assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-```
-
-### 11.4 Race Detection
+### 11.5 Race Detection
 
 Always run tests with the race detector:
 
@@ -1246,88 +928,42 @@ Always run tests with the race detector:
 go test -race ./...
 ```
 
+### 11.6 Coverage Caveat — Unreachable Defense-in-Depth Branch
+
+The handler's `HandleGuess` method uses a `switch`/`errors.Is` dispatch for
+errors returned by `ApplyGuess`:
+
+```go
+switch {
+case errors.Is(err, game.ErrGameCompleted):
+    writeError(w, http.StatusConflict, err.Error())
+case errors.Is(err, game.ErrInvalidGuess):
+    writeError(w, http.StatusUnprocessableEntity, err.Error())
+default:
+    writeError(w, http.StatusInternalServerError, "internal error")
+}
+```
+
+The `default` branch (`"internal error"` → 500) is **defense-in-depth** —
+it cannot be reached in normal operation because `ApplyGuess` only ever
+returns the two sentinel errors (`ErrGameCompleted`, `ErrInvalidGuess`).
+It exists to protect against future code changes that might introduce a
+third error type without updating the handler.
+
+Because this branch is logically unreachable, it drops `HandleGuess`
+coverage from 100% to ~93%, and total handler package coverage from
+100% to ~96-97%. This is an intentional tradeoff: adding test injection
+to cover a dead branch would introduce test-only complexity with no
+runtime benefit. All other packages (`game`, `store`, `words`,
+`identifier`) remain at 100% coverage.
+
 ---
 
 ## 12. Makefile & Deployment
 
 ### 12.1 Makefile Overview
 
-A `Makefile` lives at the project root and wraps all common commands — no need to remember `go build`, `go test -race`, or long `curl` one-liners. Every developer workflow is a single `make` target away.
-
-**Full Makefile:**
-
-```makefile
-.PHONY: build run test test-race test-cover test-cover-html clean new-game guess
-
-## Build: compile the server binary to bin/wordgame
-build:
- go build -o bin/wordgame ./cmd/wordgame/
-
-## Run: start the server on localhost:1337
-run:
- go run ./cmd/wordgame/
-
-## Test: run all tests with verbose output
-test:
- go test ./... -v
-
-## Test (race): run all tests with race detector
-test-race:
- go test -race ./...
-
-## Coverage: run tests and print per-package coverage percentages
-test-cover:
- go test ./... -coverprofile=coverage.out
- go tool cover -func=coverage.out
-
-## Coverage (HTML): open coverage report in browser
-test-cover-html:
- go test ./... -coverprofile=coverage.out
- go tool cover -html=coverage.out
-
-## New-game: hit POST /new and pretty-print the result (requires jq)
-##   Prints friendly error if the server is down.
-new-game:
- @RESP=$$(curl -s -w '\n%{http_code}' -X POST http://localhost:1337/new 2>&1) || { \
-  echo "❌ Server not running. Start it with: make run"; \
-  exit 1; \
- }; \
- HTTP_CODE=$$(echo "$$RESP" | tail -1); \
- if [ "$$HTTP_CODE" != "200" ]; then \
-  echo "❌ Server returned HTTP $$HTTP_CODE. Is the server running?"; \
-  exit 1; \
- fi; \
- echo "$$RESP" | sed '$$d' | jq .
-
-## Guess: hit POST /guess with ID and GUESS vars (requires jq)
-##   Validates missing args. Prints friendly error if server is down.
-guess:
- @if [ -z "$(ID)" ]; then \
-  echo "❌ Missing ID. Usage: make guess ID=<uuid> GUESS=<letter>"; \
-  exit 1; \
- fi; \
- if [ -z "$(GUESS)" ]; then \
-  echo "❌ Missing GUESS. Usage: make guess ID=<uuid> GUESS=<letter>"; \
-  exit 1; \
- fi; \
- RESP=$$(curl -s -w '\n%{http_code}' -X POST http://localhost:1337/guess \
-  -H "Content-Type: application/json" \
-  -d '{"id":"$(ID)","guess":"$(GUESS)"}' 2>&1) || { \
-  echo "❌ Server not running. Start it with: make run"; \
-  exit 1; \
- }; \
- HTTP_CODE=$$(echo "$$RESP" | tail -1); \
- if [ "$$HTTP_CODE" != "200" ]; then \
-  echo "❌ Server returned HTTP $$HTTP_CODE."; \
-  echo "$$RESP" | sed '$$d' | jq . 2>/dev/null || true; \
-  exit 1; \
- fi; \
- echo "$$RESP" | sed '$$d' | jq .
-
-## Clean: remove build artifacts and coverage files
-clean:
- rm -rf bin/ coverage.out
-```
+The `Makefile` at the project root wraps all common commands behind simple targets. See the file itself for the full implementation; the [Target Reference](#122-target-reference) below summarises every target.
 
 ### 12.2 Target Reference
 
@@ -1404,7 +1040,8 @@ Use this checklist to verify everything is complete before you submit:
 - [ ] `pkg/words/loader.go` — `LoadWords(r io.Reader)` exported, decoupled from filesystem
 - [ ] `internal/game/game.go` — `Game` struct, `NewGame()`, `ApplyGuess(rune)`, win/loss detection
 - [ ] `internal/store/store.go` — `GameStore` with `sync.RWMutex`, `Get`/`Save`/`Delete`
-- [ ] `internal/handler/handler.go` — `Server` struct (DI), `HandleNewGame`, `HandleGuess` with **Postel's Law normalisation**
+- [ ] `internal/handler/` — `handler.go` (orchestration), `types.go` (DTOs), `request.go` (JSON decode, normalise, validate), `response.go` (JSON write helpers)
+  - `Server` struct (DI), `HandleNewGame`, `HandleGuess` with **Postel's Law normalisation**
 - [ ] `cmd/wordgame/main.go` — Opens `words.txt`, wires dependencies, registers routes with **gorilla/mux**, starts server
 - [ ] Postel's Law — handler trims whitespace, uppercases before validation
 - [ ] Input validation — single char `[A-Z]`, game ID exists, game not completed

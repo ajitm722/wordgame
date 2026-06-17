@@ -29,12 +29,12 @@ test-cover-html:
 ## New-game: hit POST /new and pretty-print the result (requires jq)
 new-game:
 	@RESP=$$(curl -s -w '\n%{http_code}' -X POST http://localhost:1337/new 2>&1) || { \
-		echo "❌ Server not running. Start it with: make run"; \
+		echo "ERROR: Server not running. Start it with: make run"; \
 		exit 1; \
 	}; \
 	HTTP_CODE=$$(echo "$$RESP" | tail -1); \
 	if [ "$$HTTP_CODE" != "200" ]; then \
-		echo "❌ Server returned HTTP $$HTTP_CODE. Is the server running?"; \
+		echo "ERROR: Server returned HTTP $$HTTP_CODE. Is the server running?"; \
 		exit 1; \
 	fi; \
 	echo "$$RESP" | sed '$$d' | jq .
@@ -42,22 +42,22 @@ new-game:
 ## Guess: hit POST /guess with ID and GUESS vars (requires jq)
 guess:
 	@if [ -z "$(ID)" ]; then \
-		echo "❌ Missing ID. Usage: make guess ID=<uuid> GUESS=<letter>"; \
+		echo "ERROR: Missing ID. Usage: make guess ID=<uuid> GUESS=<letter>"; \
 		exit 1; \
 	fi; \
 	if [ -z "$(GUESS)" ]; then \
-		echo "❌ Missing GUESS. Usage: make guess ID=<uuid> GUESS=<letter>"; \
+		echo "ERROR: Missing GUESS. Usage: make guess ID=<uuid> GUESS=<letter>"; \
 		exit 1; \
 	fi; \
 	RESP=$$(curl -s -w '\n%{http_code}' -X POST http://localhost:1337/guess \
 		-H "Content-Type: application/json" \
 		-d '{"id":"$(ID)","guess":"$(GUESS)"}' 2>&1) || { \
-		echo "❌ Server not running. Start it with: make run"; \
+		echo "ERROR: Server not running. Start it with: make run"; \
 		exit 1; \
 	}; \
 	HTTP_CODE=$$(echo "$$RESP" | tail -1); \
 	if [ "$$HTTP_CODE" != "200" ]; then \
-		echo "❌ Server returned HTTP $$HTTP_CODE."; \
+		echo "ERROR: Server returned HTTP $$HTTP_CODE."; \
 		echo "$$RESP" | sed '$$d' | jq . 2>/dev/null || true; \
 		exit 1; \
 	fi; \

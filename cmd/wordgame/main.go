@@ -14,31 +14,30 @@ import (
 )
 
 func main() {
-	// 1. Load words from file — cmd/ opens the file, pkg/ reads from io.Reader
 	f, err := os.Open("words.txt")
 	if err != nil {
-		log.Fatalf("open words.txt: %v", err)
+		log.Fatal(err)
 	}
 	defer f.Close()
 
 	wordList, err := words.LoadWords(f)
 	if err != nil {
-		log.Fatalf("load words: %v", err)
+		log.Fatal(err)
 	}
-	log.Printf("loaded %d words", len(wordList))
+	log.Printf("loaded %d words from words.txt", len(wordList))
 
-	// 2. Create in-memory game store
+	// Create in-memory game store
 	gameStore := store.NewGameStore()
 
-	// 3. Create HTTP handler server with dependencies injected
+	// Create HTTP handler server with dependencies injected
 	srv := handler.NewServer(gameStore, wordList)
 
-	// 4. Register routes with gorilla/mux
+	// Register routes with gorilla/mux
 	r := mux.NewRouter()
 	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
 	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
 
-	// 5. Start listening
+	// Start listening
 	addr := "localhost:" + port()
 	log.Printf("starting server on http://%s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {

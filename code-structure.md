@@ -12,6 +12,7 @@ classDiagram
         -store *GameStore
         -words []string
         +NewServer() *Server
+        +pickWord() string
         +HandleNewGame(w, r)
         +HandleGuess(w, r)
     }
@@ -65,29 +66,6 @@ classDiagram
 | `-` | Unexported (private) | `Game.mu`, `GameStore.games` |
 
 ---
-
-## Dependency Direction
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  cmd/wordgame/main.go     ← composes everything, owns main  │
-│                         │                                    │
-│          ┌──────────────┼──────────────┐                    │
-│          ▼              ▼              ▼                    │
-│  internal/handler   pkg/words    pkg/identifier             │
-│          │              │              │                    │
-│     ┌────┴────┐         │              │                    │
-│     ▼         ▼         │              │                    │
-│  internal/  internal/    │              │                    │
-│  store      game         │              │                    │
-│     │         │          │              │                    │
-│     └────┬────┘          │              │                    │
-│          ▼               │              │                    │
-│       game.Game          │              │                    │
-│                          │              │                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
 **Rules enforced by Go:**
 
 - `cmd/` can import `internal/` and `pkg/`
@@ -111,15 +89,24 @@ internal/game      →  Domain logic (pure, no I/O)
 internal/store     →  Data access (repository)
 ```
 
-### `internal/handler` — HTTP Concerns Only
+### `internal/handler` — HTTP Concerns Only (4 files, each with a single responsibility)
+
+**Files:**
+
+| File | Responsibility | Reason to change |
+|------|---------------|------------------|
+| `handler.go` | Orchestration — routes requests through the flow | New endpoint, different orchestration order |
+| `request.go` | JSON decode, Postel's Law normalisation, input validation | New input format, different validation rules |
+| `response.go` | JSON response encoding | Different serialisation format |
+| `types.go` | Request/response DTOs | API contract changes |
 
 **What it does:**
 
-- Decodes JSON request bodies
-- Applies Postel's Law (trims, uppercases)
-- Validates input (single char, A-Z)
-- Encodes JSON responses with correct HTTP status codes
-- Orchestrates the flow: store → game logic → snapshot → response
+- Decodes JSON request bodies (`decodeJSONBody` in `request.go`)
+- Applies Postel's Law (`normaliseGuess` in `request.go`)
+- Validates input (`validateGuess` in `request.go`)
+- Encodes JSON responses (`writeJSON`/`writeError` in `response.go`)
+- Orchestrates the flow: store → game logic → snapshot → response (in `handler.go`)
 
 **What it does NOT do:**
 
@@ -164,22 +151,7 @@ internal/store     →  Data access (repository)
 
 **Why separated:** If you ever replace the in-memory map with Redis, PostgreSQL, or an on-disk store, you change only this package. The handler and game logic remain untouched.
 
-### The Flow
-
-```
-POST /guess {"id":"abc","guess":"a"}
-        │
-        ▼
-internal/handler   ← Parse JSON, trim, uppercase, validate
-        │
-        ├──→ internal/store.Get("abc")  ← Data access
-        │
-        ├──→ internal/game.ApplyGuess('A')  ← Business logic
-        │
-        ├──→ internal/game.Snapshot()  ← Thread-safe read
-        │
-        └──→ JSON response (200 or 400)
-```
+*(The request flow through packages is documented in detail below — see [Request Flow Through Packages](#request-flow-through-packages).)*
 
 ---
 
@@ -234,37 +206,52 @@ This is the opposite of Java/C# — the interface lives with the consumer, not t
 2. gorilla/mux routes to Handler.HandleGuess
          │
          ▼
-3. Handler decodes JSON, normalises input
+3. Handler calls decodeJSONBody(r, &req)   ← request.go: JSON decode
          │
          ▼
-4. Handler calls Store.Get(id)         ← data access
+4. Handler checks req.ID != ""              ← handler.go: missing ID check
          │
          ▼
-5. Handler calls Game.ApplyGuess('A')  ← business logic
-         │  (Game acquires mu.Lock)
-         │  (checks status, matches letter, checks win/loss)
-         │  (Game releases mu.Lock)
+5. Handler calls normaliseGuess(req.Guess)  ← request.go: Postel's Law
+         │  (TrimSpace + ToUpper)
          ▼
-6. Handler calls Game.Snapshot()       ← thread-safe read
+6. Handler calls validateGuess(guess)       ← request.go: validation
+         │  (single char, A-Z range)
+         ▼
+7. Handler calls Store.Get(id)              ← data access
          │
          ▼
-7. If game won/lost:
-   │  Handler sets response.Word
-   │  Handler calls Store.Delete(id)   ← cleanup
+8. Handler calls Game.ApplyGuess('A')       ← business logic
+         │  (mu.Lock → validateInProgress → validateRune
+         │   → isCorrectGuess → applyCorrectGuess/applyWrongGuess
+         │   → mu.Unlock)
+         ▼
+9. Handler calls Game.Snapshot()            ← thread-safe read
          │
          ▼
-8. Handler writes JSON 200 response
+10. If game won/lost:
+    │  Handler sets response.Word
+    │  Handler calls Store.Delete(id)       ← cleanup
+         │
+         ▼
+11. Handler writes JSON 200 response        ← response.go: writeJSON
 ```
 
 **Key insight:** The handler never reads `Game.Current` or `Game.GuessesRemaining` directly — it always goes through `Snapshot()` to avoid data races. Similarly, it never touches the store's internal map directly — it uses `Get`/`Save`/`Delete` which handle locking internally.
+
+**Single-responsibility flow within each package:**
+
+- `handler.go` orchestrates but doesn't validate or serialise — that's `request.go` and `response.go`'s jobs
+- `game.go`'s `ApplyGuess` delegates to five sub-methods: `validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess` — each has exactly one reason to change
+- `cmd/wordgame/main.go` defers file opening to `loadWordList()` — `main()` is pure orchestration
 
 ---
 
 ## Concurrency Model
 
 ```
-HTTP Request 1 ──→ Store.Get() [RLock ✓] ──→ Game.Mutex [acquired]
-HTTP Request 2 ──→ Store.Get() [RLock ✓] ──→ Game.Mutex [waits]
+HTTP Request 1 ──→ Store.Get() [RLock] ──→ Game.Mutex [acquired]
+HTTP Request 2 ──→ Store.Get() [RLock] ──→ Game.Mutex [waits]
 
                     Different game IDs:
 HTTP Request 1 ──→ Store.Get("abc") ──→ Game-abc.Mutex [acquired]
