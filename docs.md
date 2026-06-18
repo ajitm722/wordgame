@@ -1,5 +1,11 @@
 # Word Game — Backend Engineering Specification
 
+> **Demo:** Watch the full API lifecycle — coverage, smoke tests, gameplay, etc.
+>
+> ![demo](assets/demo.gif)
+>
+> ⓘ *Best previewed in a browser (renders GIFs inline.*)
+
 ---
 
 ## Table of Contents
@@ -59,6 +65,7 @@ wordgame-main/
 │   └── identifier/
 │       ├── id.go                    ← GenerateIdentifier() — UUID v4 generation
 │       └── id_test.go
+├── assets/                          ← Demo GIF (recorded with VHS)
 ├── Makefile                         ← Build, test, coverage, linting & game interaction targets
 ├── .golangci.yml                    ← Linter config (errcheck, govet, staticcheck, unparam)
 ├── words.txt                        ← Word dictionary data file (unchanged)
@@ -876,14 +883,14 @@ Sets up a real `GameStore` + word list, creates a `Server`, and uses `httptest.N
 
 ### 10.4 SRP Method Tests
 
-Every extracted SRP method (`validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`, `normaliseGuess`, `decodeJSONBody`) has direct unit tests covering its specific contract. These run alongside the integration tests and improved coverage granularity (game package: 87.5% → 100%).
+Every extracted SRP method (`validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`, `normaliseGuess`, `decodeJSONBody`) has direct unit tests covering its specific contract.
 
 ### 10.5 Coverage Overview
 
 Running `make test-cover-html` produces the following per-package coverage:
 
 ```
-ok      github.com/fleetdm/wordgame/cmd/wordgame        0.006s  coverage: 0.0% of statements
+ok      github.com/fleetdm/wordgame/cmd/wordgame        0.006s  coverage: 6.7% of statements
 ok      github.com/fleetdm/wordgame/internal/game       0.003s  coverage: 100.0% of statements
 ok      github.com/fleetdm/wordgame/internal/handler    0.006s  coverage: 98.3% of statements
 ok      github.com/fleetdm/wordgame/internal/store      0.003s  coverage: 100.0% of statements
@@ -893,16 +900,16 @@ ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of stat
 
 | Package | Coverage | Notes |
 |---------|----------|-------|
-| `cmd/wordgame` | 0.0% | Thin `main()` + `run()` wrapper — smoke tests exercise via `httptest.Server`, not direct calls |
+| `cmd/wordgame` | 6.7% | Smoke tests exercise `registerRoutes` + handlers via `httptest.Server`; `main()` and `runServer()` are not called directly by unit tests |
 | `internal/game` | 100.0% | Pure business logic, zero I/O — easy to exhaust |
 | `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)) |
 | `internal/store` | 100.0% | Simple CRUD with `sync.RWMutex` — all paths covered |
 | `pkg/identifier` | 100.0% | Single exported function with wrapped error |
 | `pkg/words` | 100.0% | `io.Reader`-based loader — all filtering paths tested |
 
-Five of six packages at 100%. The two exceptions are expected:
+Four of six packages at 100%. The two exceptions are expected:
 
-- **`cmd/wordgame` (0.0%)** — The `main()` and `run()` functions are only exercised via smoke tests which start a real `httptest.Server` rather than calling them directly. This is standard for thin entry-point packages; the business logic it wires together is tested at the `internal/` and `pkg/` levels.
+- **`cmd/wordgame` (6.7%)** — The `main()`, `NewRootCommand()`, and `runServer()` functions are exercised via smoke tests which start a real `httptest.Server`. The 6.7% coverage comes from `registerRoutes` + handler code paths hit by smoke test HTTP requests. Entry-point wiring (`main`, `runServer`, command setup) is not called directly by any test — standard for thin entry-point packages.
 - **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)).
 
 ### 10.6 Coverage Caveat — Defense-in-Depth `default` Branch
@@ -942,9 +949,11 @@ The `Makefile` at the project root wraps all common commands behind simple targe
 | `make test-race` | Runs tests with the race detector | `make test-race` |
 | `make test-cover` | Runs tests + prints per-package coverage % | `make test-cover` |
 | `make test-cover-html` | Runs tests + opens coverage in browser | `make test-cover-html` |
+| `make smoke` | Runs end-to-end HTTP smoke tests | `make smoke` |
 | `make new-game` | Creates a new game (server must be running) | `make new-game` |
 | `make guess ID=<uuid> GUESS=a` | Guesses a letter in a game | `make guess ID=abc GUESS=p` |
 | `make clean` | Removes `bin/` and `coverage.out` | `make clean` |
+| `make stop` | Kills the server on port 1337 | `make stop` |
 
 ### 11.3 Typical Development Workflow
 
@@ -977,25 +986,6 @@ make guess ID=f8302916-... GUESS=p
 make test-race && make test-cover
 ```
 
-### 11.4 Heroku Deployment
-
-- The `Procfile` expects the binary at `bin/wordgame`. Use `make build` to generate it:
-
-  ```bash
-  make build   # → bin/wordgame
-  ```
-
-- Heroku sets the `PORT` environment variable. The server must listen on `os.Getenv("PORT")` with a fallback to `1337`:
-
-  ```go
-  func port() string {
-      if p := os.Getenv("PORT"); p != "" {
-          return p
-      }
-      return "1337"
-  }
-  ```
-
 ---
 
 ## 12. Smoke Tests
@@ -1015,7 +1005,7 @@ End-to-end smoke tests verify the full HTTP stack works together — routes are 
 
 ¹ Handler tests use `httptest.NewRecorder`, which bypasses the HTTP transport layer — content-type headers set via `w.Header().Set()` still appear, but the real HTTP serialisation path is never exercised.
 
-² Via `run()` extraction — `main()` delegates to `run(stderr io.Writer) error`, making startup failures testable without `log.Fatal`.
+² Via Cobra's `RunE` and `runServer(stderr, port)` — startup errors propagate as returned `error` values instead of `log.Fatal`, making them testable.
 
 ### 12.2 Test design
 
@@ -1049,7 +1039,7 @@ Three design decisions make smoke tests straightforward:
 
 1. **Cobra CLI layer (`NewRootCommand`) and `runServer(stderr io.Writer, port string) error` in `cmd/wordgame/main.go`** — The binary is structured as a Cobra command. `NewRootCommand()` defines the `--port` / `-p` flag (defaulting to the `PORT` env var, falling back to `"1337"`) and auto-generates `--help` text. `RunE` delegates to `runServer`, which contains all startup logic: open `words.txt`, load the word list, wire dependencies, register routes, and call `http.ListenAndServe`. Because `RunE` and `runServer` both return `error`, errors propagate gracefully to Cobra's built-in error printing — no `log.Fatal` or `os.Exit` needed. Tests can inject a `bytes.Buffer` via `cmd.SetErr(buf)` and override flags via `cmd.SetArgs(...)` to exercise the full CLI lifecycle without starting a real server.
 
-2. **`registerRoutes` in `cmd/wordgame/main.go`** — Route definitions live in a single `registerRoutes(r *mux.Router, srv *handler.Server)` package-level function. Both `run()` and smoke tests (which are in the same `package main`) call it, guaranteeing they exercise the exact same routing. No risk of routes drifting apart, and no untested mux dependency polluting the handler package.
+2. **`registerRoutes` in `cmd/wordgame/main.go`** — Route definitions live in a single `registerRoutes(r *mux.Router, srv *handler.Server)` package-level function. Both `runServer()` and smoke tests (which are in the same `package main`) call it, guaranteeing they exercise the exact same routing. No risk of routes drifting apart, and no untested mux dependency polluting the handler package.
 
 3. **`WithIDGenerator(fn)` functional option in `internal/handler/handler.go`** — The handler's ID generator is injected at construction time via a functional option, allowing unit tests to swap in a deterministic generator (e.g., to trigger and assert on ID-generation failures) without mutable package globals or fragile defer/restore patterns. Smoke tests deliberately use the **real** UUID generator: they create a game via `POST /new`, extract the generated ID from the JSON response, and use it for subsequent guesses — a true end-to-end exercise of the full pipeline.
 

@@ -249,7 +249,7 @@ This is the opposite of Java/C# — the interface lives with the consumer, not t
 
 - `handler.go` orchestrates — string validation (empty, too-long) is inline. A-Z validation is delegated to `game.ApplyGuess` via `errors.Is(err, game.ErrInvalidGuess)`. JSON decode/serialise lives in `request.go`/`response.go`.
 - `game.go`'s `ApplyGuess` delegates to five sub-methods: `validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess` — each has exactly one reason to change
-- `cmd/wordgame/main.go` — `main()` is a thin wrapper; startup logic lives in `run(stderr)` for testability
+- `cmd/wordgame/main.go` — `main()` delegates to Cobra's `NewRootCommand()`; startup logic lives in `runServer(stderr, port)` for testability
 
 ---
 
