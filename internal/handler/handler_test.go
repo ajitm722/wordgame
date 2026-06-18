@@ -99,7 +99,7 @@ func TestHandleGuess_Correct(t *testing.T) {
 	}
 }
 
-// TestHandleGuess_Wrong verifies an incorrect letter guess returns all underscores and decrements guesses remaining to 5.
+// TestHandleGuess_Wrong verifies an incorrect letter guess returns all underscores and decrements guesses remaining to MaxGuesses-1.
 func TestHandleGuess_Wrong(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE"}
@@ -126,8 +126,8 @@ func TestHandleGuess_Wrong(t *testing.T) {
 	if resp.Current != "_____" {
 		t.Errorf("current = %q, want %q", resp.Current, "_____")
 	}
-	if resp.GuessesRemaining != 5 {
-		t.Errorf("guesses_remaining = %d, want 5", resp.GuessesRemaining)
+	if resp.GuessesRemaining != game.MaxGuesses-1 {
+		t.Errorf("guesses_remaining = %d, want %d", resp.GuessesRemaining, game.MaxGuesses-1)
 	}
 }
 
@@ -324,7 +324,7 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	var resp2 GuessResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp2)
 
-	// Repeat wrong guess: 5 → 4 (every guess counts)
+	// Repeat wrong guess: MaxGuesses-1 → MaxGuesses-2 (every guess counts)
 	if resp2.GuessesRemaining != resp1.GuessesRemaining-1 {
 		t.Errorf("guesses_remaining = %d, want %d (repeat wrong guess should still decrement)",
 			resp2.GuessesRemaining, resp1.GuessesRemaining-1)
@@ -617,7 +617,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 				i+1, letter, lastResp.GuessesRemaining, expectedRemaining)
 		}
 		// Word should NOT be revealed until the final guess
-		if i < 5 && lastResp.Word != "" {
+		if i < game.MaxGuesses-1 && lastResp.Word != "" {
 			t.Errorf("word should not be revealed mid-game, got %q", lastResp.Word)
 		}
 	}
@@ -731,10 +731,10 @@ func TestHandleGuess_ConcurrentDifferentGames(t *testing.T) {
 	<-done
 	<-done
 
-	// Game 1 should have 5 guesses (one wrong)
+	// Game 1 should have MaxGuesses-1 guesses (one wrong)
 	g1 := s.Get(r1.ID)
-	if g1.GuessesRemaining != 5 {
-		t.Errorf("game 1: expected 5 guesses remaining, got %d", g1.GuessesRemaining)
+	if g1.GuessesRemaining != game.MaxGuesses-1 {
+		t.Errorf("game 1: expected %d guesses remaining, got %d", game.MaxGuesses-1, g1.GuessesRemaining)
 	}
 
 	// Game 2 state depends on which word was chosen

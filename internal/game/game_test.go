@@ -98,8 +98,8 @@ func TestApplyGuess_Wrong(t *testing.T) {
 	if g.Current != "_____" {
 		t.Errorf("Current should remain unchanged")
 	}
-	if g.GuessesRemaining != 5 {
-		t.Errorf("GuessesRemaining = %d, want 5", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses-1 {
+		t.Errorf("GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses-1)
 	}
 }
 
@@ -167,8 +167,8 @@ func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 
 	// First wrong guess
 	_ = g.ApplyGuess('Z')
-	if g.GuessesRemaining != 5 {
-		t.Fatalf("after first Z: GuessesRemaining = %d, want 5", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses-1 {
+		t.Fatalf("after first Z: GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses-1)
 	}
 
 	// Repeat the same wrong letter — must decrement again
@@ -176,8 +176,8 @@ func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on repeat wrong: %v", err)
 	}
-	if g.GuessesRemaining != 4 {
-		t.Errorf("GuessesRemaining = %d, want 4 (repeat wrong should decrement again)", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses-2 {
+		t.Errorf("GuessesRemaining = %d, want %d (repeat wrong should decrement again)", g.GuessesRemaining, MaxGuesses-2)
 	}
 }
 
@@ -391,8 +391,8 @@ func TestApplyWrongGuess(t *testing.T) {
 	t.Run("decrements remaining", func(t *testing.T) {
 		g := NewGame("id", "APPLE")
 		g.applyWrongGuess()
-		if g.GuessesRemaining != 5 {
-			t.Errorf("GuessesRemaining = %d, want 5", g.GuessesRemaining)
+		if g.GuessesRemaining != MaxGuesses-1 {
+			t.Errorf("GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses-1)
 		}
 		if g.Status != StatusInProgress {
 			t.Errorf("should still be in progress")
