@@ -174,7 +174,7 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 	}
 
 	// Make game.MaxGuesses wrong guesses to exhaust the game (word is "ZZZZ", guess 'A')
-	for i := 0; i < game.MaxGuesses; i++ {
+	for i := range game.MaxGuesses {
 		resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
 			ID:    newGame.ID,
 			Guess: "A",

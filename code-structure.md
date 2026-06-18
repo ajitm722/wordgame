@@ -30,9 +30,6 @@ classDiagram
     class Game {
         +ID string
         +Word string
-        +Current string
-        +GuessesRemaining int
-        +Status Status
         -mu sync.Mutex
         +NewGame(id, word) *Game
         +ApplyGuess(guess) error
@@ -44,6 +41,8 @@ classDiagram
         +GuessesRemaining int
         +Status Status
     }
+
+    Game *-- State : embeds
 
     class Status {
         StatusInProgress

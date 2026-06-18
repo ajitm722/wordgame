@@ -33,11 +33,9 @@ const (
 
 // Game represents the complete state of a word-guessing game session.
 type Game struct {
-	ID               string // UUID v4 identifier
-	Word             string // The chosen word (uppercase, e.g. "APPLE")
-	Current          string // Board state with underscores (e.g. "_PP__")
-	GuessesRemaining int    // Starts at MaxGuesses, counts down on wrong guesses
-	Status           Status // InProgress, Won, or Lost
+	ID   string // UUID v4 identifier
+	Word string // The chosen word (uppercase, e.g. "APPLE")
+	State       // Embedded — promoted fields: Current, GuessesRemaining, Status
 
 	mu sync.Mutex // Protects all fields from concurrent access
 }
@@ -54,11 +52,13 @@ type State struct {
 // Initial guesses remaining is MaxGuesses.
 func NewGame(id, word string) *Game {
 	return &Game{
-		ID:               id,
-		Word:             word,
-		Current:          strings.Repeat("_", len(word)),
-		GuessesRemaining: MaxGuesses,
-		Status:           StatusInProgress,
+		ID:   id,
+		Word: word,
+		State: State{
+			Current:          strings.Repeat("_", len(word)),
+			GuessesRemaining: MaxGuesses,
+			Status:           StatusInProgress,
+		},
 	}
 }
 
@@ -145,9 +145,5 @@ func (g *Game) applyWrongGuess() {
 func (g *Game) Snapshot() State {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return State{
-		Current:          g.Current,
-		GuessesRemaining: g.GuessesRemaining,
-		Status:           g.Status,
-	}
+	return g.State
 }

@@ -253,7 +253,7 @@ func TestApplyGuess_AlreadyLost(t *testing.T) {
 func TestApplyGuess_RepeatWrongLoses(t *testing.T) {
 	g := NewGame("test-id", "XYZ")
 
-	for i := 0; i < MaxGuesses; i++ {
+	for i := range MaxGuesses {
 		err := g.ApplyGuess('A')
 		if err != nil {
 			t.Fatalf("guess %d: unexpected error: %v", i+1, err)

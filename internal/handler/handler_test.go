@@ -660,7 +660,7 @@ func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 
 	// Spawn 10 goroutines all guessing 'A' concurrently
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			body := strings.NewReader(`{"id":"` + newResp.ID + `","guess":"A"}`)
 			req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -671,7 +671,7 @@ func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 

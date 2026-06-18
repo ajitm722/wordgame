@@ -734,20 +734,25 @@ sequenceDiagram
 ```go
 // Game represents the complete state of a word-guessing game session.
 type Game struct {
-    ID               string    // UUID v4
-    Word             string    // The chosen word (uppercase, e.g. "APPLE")
-    Current          string    // Board state with underscores (e.g. "_PP__")
-    GuessesRemaining int       // Starts at MaxGuesses, counts down on every wrong guess
-    Status           Status    // InProgress, Won, or Lost
+    ID   string    // UUID v4
+    Word string    // The chosen word (uppercase, e.g. "APPLE")
+    State          // Embedded — Current, GuessesRemaining, Status promoted
 
-    mu sync.Mutex              // Protects all fields from concurrent access
+    mu sync.Mutex  // Protects all fields from concurrent access
 }
 
-// State holds a thread-safe snapshot for external readers.
+// State holds a thread-safe snapshot of game state for external readers.
 type State struct {
     Current          string
     GuessesRemaining int
     Status           Status
+}
+
+// Snapshot copies the embedded State under lock.
+func (g *Game) Snapshot() State {
+    g.mu.Lock()
+    defer g.mu.Unlock()
+    return g.State
 }
 
 type Status int
