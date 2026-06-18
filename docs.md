@@ -1047,7 +1047,7 @@ make test
 
 Three design decisions make smoke tests straightforward:
 
-1. **`run(stderr io.Writer) error` in `cmd/wordgame/main.go`** — Startup logic lives in `run()` rather than `main()`, so tests can call it and assert on the returned error instead of catching a `log.Fatal`. The `stderr` writer is wired into a custom logger (`log.New(stderr, ...)`), keeping startup messages out of test output and allowing future tests to assert on log lines if needed. `main()` is a thin three-line wrapper that calls `run(os.Stderr)` and passes any error to `log.Fatal`.
+1. **Cobra CLI layer (`NewRootCommand`) and `runServer(stderr io.Writer, port string) error` in `cmd/wordgame/main.go`** — The binary is structured as a Cobra command. `NewRootCommand()` defines the `--port` / `-p` flag (defaulting to the `PORT` env var, falling back to `"1337"`) and auto-generates `--help` text. `RunE` delegates to `runServer`, which contains all startup logic: open `words.txt`, load the word list, wire dependencies, register routes, and call `http.ListenAndServe`. Because `RunE` and `runServer` both return `error`, errors propagate gracefully to Cobra's built-in error printing — no `log.Fatal` or `os.Exit` needed. Tests can inject a `bytes.Buffer` via `cmd.SetErr(buf)` and override flags via `cmd.SetArgs(...)` to exercise the full CLI lifecycle without starting a real server.
 
 2. **`registerRoutes` in `cmd/wordgame/main.go`** — Route definitions live in a single `registerRoutes(r *mux.Router, srv *handler.Server)` package-level function. Both `run()` and smoke tests (which are in the same `package main`) call it, guaranteeing they exercise the exact same routing. No risk of routes drifting apart, and no untested mux dependency polluting the handler package.
 

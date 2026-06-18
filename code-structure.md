@@ -286,16 +286,14 @@ Sentinel errors (`ErrGameCompleted`, `ErrInvalidGuess`) allow callers to use `er
 
 ## Entry Point Wiring
 
-`cmd/wordgame/main.go` — `main()` delegates to `run(stderr)`:
+`cmd/wordgame/main.go` — uses [Cobra](https://github.com/spf13/cobra) for CLI parsing:
 
-1. Opens `words.txt` via `os.Open`
-2. Loads words with `words.LoadWords(r io.Reader)`
-3. Creates `store.NewGameStore()`
-4. Creates `handler.NewServer(store, words)` with injected dependencies
-5. Registers routes with `gorilla/mux` (`POST /new`, `POST /guess`)
-6. Starts `http.ListenAndServe` on `localhost:1337` (or `PORT` env var)
+1. `main()` calls `NewRootCommand().Execute()` — exits 1 on error
+2. `NewRootCommand()` defines the `--port` / `-p` flag (default: `PORT` env var, fallback `"1337"`), auto-generates `--help` text, and wires `RunE` to `runServer`
+3. `runServer(stderr, port)` opens `words.txt`, loads words, creates `store.NewGameStore()`, creates `handler.NewServer(store, words)`, calls `registerRoutes(r, srv)`, and starts `http.ListenAndServe`
+4. `registerRoutes(r, srv)` is the single source of truth for HTTP routing — shared by `runServer()` and smoke tests
 
-`main()` is a thin wrapper: if `run()` returns an error, it calls `log.Fatal`. All startup messages go through a custom logger wired to the injected `stderr` writer.
+Startup diagnostic messages (word count, listen address) go through a `log.New(stderr, ...)` logger. Cobra's `cmd.OutOrStderr()` passes the writer, so tests can capture output via `cmd.SetErr(buf)`.
 
 ---
 

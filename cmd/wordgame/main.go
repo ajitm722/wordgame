@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
+	"github.com/spf13/cobra"
 
 	"github.com/fleetdm/wordgame/internal/handler"
 	"github.com/fleetdm/wordgame/internal/store"
@@ -15,16 +16,36 @@ import (
 )
 
 func main() {
-	if err := run(os.Stderr); err != nil {
-		log.Fatal(err)
+	if err := NewRootCommand().Execute(); err != nil {
+		os.Exit(1)
 	}
 }
 
-// run contains the server startup logic, extracted from main() for testability.
-// stderr is wired into a custom logger so tests can capture startup messages.
-func run(stderr io.Writer) error {
+// NewRootCommand constructs the CLI with --port flag and auto-generated --help.
+func NewRootCommand() *cobra.Command {
+	var port string
+
+	defaultPort := "1337"
+	if p := os.Getenv("PORT"); p != "" {
+		defaultPort = p
+	}
+
+	cmd := &cobra.Command{
+		Use:   "wordgame",
+		Short: "Starts the word-guessing game HTTP server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServer(cmd.OutOrStderr(), port)
+		},
+	}
+
+	cmd.Flags().StringVarP(&port, "port", "p", defaultPort, "Listen port for the HTTP server")
+	return cmd
+}
+
+func runServer(stderr io.Writer, port string) error {
 	logger := log.New(stderr, "", log.LstdFlags)
 
+	// Load word list from filesystem
 	f, err := os.Open("words.txt")
 	if err != nil {
 		return err
@@ -47,8 +68,8 @@ func run(stderr io.Writer) error {
 	r := mux.NewRouter()
 	registerRoutes(r, srv)
 
-	// Start listening
-	addr := "localhost:" + port()
+	// Start HTTP server
+	addr := "localhost:" + port
 	logger.Printf("starting server on http://%s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		return err
@@ -57,17 +78,8 @@ func run(stderr io.Writer) error {
 }
 
 // registerRoutes adds all HTTP routes to the given router.
-// Shared by run() and smoke tests so there is a single source of truth.
+// Shared by runServer() and smoke tests so there is a single source of truth.
 func registerRoutes(r *mux.Router, srv *handler.Server) {
 	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
 	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
-}
-
-// port returns the listen port from the PORT environment variable,
-// falling back to "1337" for local development.
-func port() string {
-	if p := os.Getenv("PORT"); p != "" {
-		return p
-	}
-	return "1337"
 }
