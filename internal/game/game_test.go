@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestNewGame creates a game and verifies the initial state including ID, Word, Current display,
+// GuessesRemaining, and Status.
 func TestNewGame(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
@@ -17,14 +19,16 @@ func TestNewGame(t *testing.T) {
 	if g.Current != "_____" {
 		t.Errorf("Current = %q, want %q", g.Current, "_____")
 	}
-	if g.GuessesRemaining != 6 {
-		t.Errorf("GuessesRemaining = %d, want 6", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses {
+		t.Errorf("GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses)
 	}
 	if g.Status != StatusInProgress {
 		t.Errorf("Status = %d, want StatusInProgress", g.Status)
 	}
 }
 
+// TestNewGame_DifferentLengths verifies that NewGame correctly initialises the Current field
+// with underscores matching the word length for various word sizes.
 func TestNewGame_DifferentLengths(t *testing.T) {
 	tests := []struct {
 		word            string
@@ -45,6 +49,8 @@ func TestNewGame_DifferentLengths(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_Correct verifies that a correct guess reveals the letter on the board without
+// consuming a remaining guess.
 func TestApplyGuess_Correct(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
@@ -55,14 +61,16 @@ func TestApplyGuess_Correct(t *testing.T) {
 	if g.Current != "_PP__" {
 		t.Errorf("Current = %q, want %q", g.Current, "_PP__")
 	}
-	if g.GuessesRemaining != 6 {
-		t.Errorf("GuessesRemaining = %d, want 6", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses {
+		t.Errorf("GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses)
 	}
 	if g.Status != StatusInProgress {
 		t.Errorf("Status should be InProgress")
 	}
 }
 
+// TestApplyGuess_Correct_MultipleOccurrences verifies that guessing a letter appearing multiple
+// times in the word reveals all occurrences on the board.
 func TestApplyGuess_Correct_MultipleOccurrences(t *testing.T) {
 	g := NewGame("test-id", "BANANA")
 
@@ -73,11 +81,13 @@ func TestApplyGuess_Correct_MultipleOccurrences(t *testing.T) {
 	if g.Current != "_A_A_A" {
 		t.Errorf("Current = %q, want %q", g.Current, "_A_A_A")
 	}
-	if g.GuessesRemaining != 6 {
-		t.Errorf("GuessesRemaining = %d, want 6", g.GuessesRemaining)
+	if g.GuessesRemaining != MaxGuesses {
+		t.Errorf("GuessesRemaining = %d, want %d", g.GuessesRemaining, MaxGuesses)
 	}
 }
 
+// TestApplyGuess_Wrong verifies that a wrong guess decrements GuessesRemaining without
+// changing the board display.
 func TestApplyGuess_Wrong(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
@@ -93,6 +103,8 @@ func TestApplyGuess_Wrong(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_Win verifies that guessing the final missing letter correctly reveals the word
+// and transitions the game status to StatusWon.
 func TestApplyGuess_Win(t *testing.T) {
 	g := NewGame("test-id", "CAT")
 	g.Current = "CA_"
@@ -109,6 +121,8 @@ func TestApplyGuess_Win(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_Loss verifies that the last wrong guess sets GuessesRemaining to 0 and
+// transitions the game status to StatusLost.
 func TestApplyGuess_Loss(t *testing.T) {
 	g := NewGame("test-id", "DOG")
 	g.GuessesRemaining = 1
@@ -125,6 +139,8 @@ func TestApplyGuess_Loss(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_AllSixWrong_Loses verifies that six distinct wrong guesses in sequence
+// exhaust remaining guesses and transition to lost.
 func TestApplyGuess_AllSixWrong_Loses(t *testing.T) {
 	g := NewGame("test-id", "XYZ")
 
@@ -144,6 +160,8 @@ func TestApplyGuess_AllSixWrong_Loses(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_RepeatWrong_DecrementsAgain verifies that guessing the same wrong letter
+// multiple times decrements guesses on each attempt.
 func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
@@ -163,6 +181,8 @@ func TestApplyGuess_RepeatWrong_DecrementsAgain(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_RepeatCorrect_RevealsAgain verifies that repeating an already-revealed correct
+// letter does not penalise guesses or change the board.
 func TestApplyGuess_RepeatCorrect_RevealsAgain(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 	_ = g.ApplyGuess('P')
@@ -187,6 +207,8 @@ func TestApplyGuess_RepeatCorrect_RevealsAgain(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_InvalidRune verifies ApplyGuess returns an error for digits, non-ASCII runes,
+// and lowercase letters, while accepting valid uppercase letters.
 func TestApplyGuess_InvalidRune(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 
@@ -204,6 +226,7 @@ func TestApplyGuess_InvalidRune(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_AlreadyCompleted verifies that ApplyGuess returns an error when called on a game that has already been won.
 func TestApplyGuess_AlreadyCompleted(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 	g.Status = StatusWon
@@ -214,6 +237,7 @@ func TestApplyGuess_AlreadyCompleted(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_AlreadyLost verifies that ApplyGuess returns an error when called on a game that has already been lost.
 func TestApplyGuess_AlreadyLost(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 	g.Status = StatusLost
@@ -224,11 +248,12 @@ func TestApplyGuess_AlreadyLost(t *testing.T) {
 	}
 }
 
+// TestApplyGuess_RepeatWrongLoses verifies that guessing the same wrong letter MaxGuesses times
+// exhausts all guesses and transitions to lost.
 func TestApplyGuess_RepeatWrongLoses(t *testing.T) {
-	// Lose by guessing the same wrong letter 6 times
 	g := NewGame("test-id", "XYZ")
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < MaxGuesses; i++ {
 		err := g.ApplyGuess('A')
 		if err != nil {
 			t.Fatalf("guess %d: unexpected error: %v", i+1, err)
@@ -245,6 +270,8 @@ func TestApplyGuess_RepeatWrongLoses(t *testing.T) {
 
 // --- SRP method tests ---
 
+// TestValidateInProgress verifies validateInProgress returns nil for active games and
+// ErrGameCompleted for already-won or already-lost games.
 func TestValidateInProgress(t *testing.T) {
 	t.Run("in progress returns nil", func(t *testing.T) {
 		g := NewGame("id", "TEST")
@@ -270,6 +297,8 @@ func TestValidateInProgress(t *testing.T) {
 	})
 }
 
+// TestValidateRune verifies validateRune accepts valid uppercase A-Z and rejects lowercase,
+// digits, special characters, and non-ASCII runes.
 func TestValidateRune(t *testing.T) {
 	g := NewGame("id", "TEST")
 
@@ -304,6 +333,8 @@ func TestValidateRune(t *testing.T) {
 	})
 }
 
+// TestIsCorrectGuess verifies isCorrectGuess returns true for letters in the word,
+// false for letters not in the word, and handles single-letter words correctly.
 func TestIsCorrectGuess(t *testing.T) {
 	g := NewGame("id", "BANANA")
 
@@ -327,6 +358,8 @@ func TestIsCorrectGuess(t *testing.T) {
 	})
 }
 
+// TestApplyCorrectGuess verifies that applyCorrectGuess reveals the letter on the board
+// and transitions to won when the word is fully revealed.
 func TestApplyCorrectGuess(t *testing.T) {
 	t.Run("reveals letter on board", func(t *testing.T) {
 		g := NewGame("id", "APPLE")
@@ -352,6 +385,8 @@ func TestApplyCorrectGuess(t *testing.T) {
 	})
 }
 
+// TestApplyWrongGuess verifies that applyWrongGuess decrements remaining guesses,
+// transitions to lost at zero, and caps at zero without going negative.
 func TestApplyWrongGuess(t *testing.T) {
 	t.Run("decrements remaining", func(t *testing.T) {
 		g := NewGame("id", "APPLE")
@@ -389,6 +424,7 @@ func TestApplyWrongGuess(t *testing.T) {
 	})
 }
 
+// TestSnapshot verifies that Snapshot returns a correct copy of the current game state.
 func TestSnapshot(t *testing.T) {
 	g := NewGame("test-id", "APPLE")
 	_ = g.ApplyGuess('P')
@@ -397,8 +433,8 @@ func TestSnapshot(t *testing.T) {
 	if snap.Current != "_PP__" {
 		t.Errorf("snapshot Current = %q, want %q", snap.Current, "_PP__")
 	}
-	if snap.GuessesRemaining != 6 {
-		t.Errorf("snapshot GuessesRemaining = %d, want 6", snap.GuessesRemaining)
+	if snap.GuessesRemaining != MaxGuesses {
+		t.Errorf("snapshot GuessesRemaining = %d, want %d", snap.GuessesRemaining, MaxGuesses)
 	}
 	if snap.Status != StatusInProgress {
 		t.Errorf("snapshot Status should be InProgress")

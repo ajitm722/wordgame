@@ -19,6 +19,9 @@ var (
 // Exported so that the handler package uses the same regex.
 var LetterRegex = regexp.MustCompile(`^[A-Z]$`)
 
+// MaxGuesses is the number of wrong guesses allowed before the game is lost.
+const MaxGuesses = 6
+
 // Status represents the current state of a game.
 type Status int
 
@@ -33,7 +36,7 @@ type Game struct {
 	ID               string // UUID v4 identifier
 	Word             string // The chosen word (uppercase, e.g. "APPLE")
 	Current          string // Board state with underscores (e.g. "_PP__")
-	GuessesRemaining int    // Starts at 6, counts down on wrong guesses
+	GuessesRemaining int    // Starts at MaxGuesses, counts down on wrong guesses
 	Status           Status // InProgress, Won, or Lost
 
 	mu sync.Mutex // Protects all fields from concurrent access
@@ -48,13 +51,13 @@ type State struct {
 
 // NewGame creates a new game with the given ID and word.
 // The initial board state is all underscores, one per character.
-// Initial guesses remaining is 6.
+// Initial guesses remaining is MaxGuesses.
 func NewGame(id, word string) *Game {
 	return &Game{
 		ID:               id,
 		Word:             word,
 		Current:          strings.Repeat("_", len(word)),
-		GuessesRemaining: 6,
+		GuessesRemaining: MaxGuesses,
 		Status:           StatusInProgress,
 	}
 }

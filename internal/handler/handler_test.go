@@ -12,6 +12,7 @@ import (
 	"github.com/fleetdm/wordgame/internal/store"
 )
 
+// TestHandleNewGame verifies POST /new returns 200 with a valid game ID, MaxGuesses guesses remaining, and underscores-only current state.
 func TestHandleNewGame(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE", "ORANGE", "BANANA"}
@@ -34,8 +35,8 @@ func TestHandleNewGame(t *testing.T) {
 	if resp.ID == "" {
 		t.Error("id should not be empty")
 	}
-	if resp.GuessesRemaining != 6 {
-		t.Errorf("guesses_remaining = %d, want 6", resp.GuessesRemaining)
+	if resp.GuessesRemaining != game.MaxGuesses {
+		t.Errorf("guesses_remaining = %d, want %d", resp.GuessesRemaining, game.MaxGuesses)
 	}
 	// Current should be all underscores matching one of our words
 	if len(resp.Current) == 0 {
@@ -49,6 +50,7 @@ func TestHandleNewGame(t *testing.T) {
 	}
 }
 
+// TestHandleNewGame_MethodNotAllowed verifies POST /new returns 405 Method Not Allowed when called with an incorrect HTTP method.
 func TestHandleNewGame_MethodNotAllowed(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -63,6 +65,7 @@ func TestHandleNewGame_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_Correct verifies a correct letter guess reveals its position in the word and does not decrement guesses remaining.
 func TestHandleGuess_Correct(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE"}
@@ -91,11 +94,12 @@ func TestHandleGuess_Correct(t *testing.T) {
 	if resp.Current != "A____" {
 		t.Errorf("current = %q, want %q", resp.Current, "A____")
 	}
-	if resp.GuessesRemaining != 6 {
-		t.Errorf("guesses_remaining = %d, want 6", resp.GuessesRemaining)
+	if resp.GuessesRemaining != game.MaxGuesses {
+		t.Errorf("guesses_remaining = %d, want %d", resp.GuessesRemaining, game.MaxGuesses)
 	}
 }
 
+// TestHandleGuess_Wrong verifies an incorrect letter guess returns all underscores and decrements guesses remaining to 5.
 func TestHandleGuess_Wrong(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE"}
@@ -127,6 +131,7 @@ func TestHandleGuess_Wrong(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_GameNotFound verifies guessing on a non-existent game ID returns 404 with "game not found".
 func TestHandleGuess_GameNotFound(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -148,6 +153,7 @@ func TestHandleGuess_GameNotFound(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_AlreadyCompleted verifies that after winning a game, further guesses return 404 since the game is deleted from the store.
 func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"A"} // single-letter word for instant win
@@ -187,6 +193,7 @@ func TestHandleGuess_AlreadyCompleted(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_InvalidGuess verifies that empty, multi-character, digit, and special-character guesses return 422 Unprocessable Entity with appropriate error messages.
 func TestHandleGuess_InvalidGuess(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE"}
@@ -204,8 +211,8 @@ func TestHandleGuess_InvalidGuess(t *testing.T) {
 	}{
 		{"empty", "", "missing guess"},
 		{"too long", "AB", "guess must be a single character"},
-		{"digit", "5", "guess must be a single letter A-Z"},
-		{"special", "@", "guess must be a single letter A-Z"},
+		{"digit", "5", "guess must be a single A-Z character"},
+		{"special", "@", "guess must be a single A-Z character"},
 	}
 
 	for _, tt := range tests {
@@ -229,6 +236,7 @@ func TestHandleGuess_InvalidGuess(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_MissingID verifies a guess request without an ID field returns 400 Bad Request with "missing game id".
 func TestHandleGuess_MissingID(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -250,6 +258,7 @@ func TestHandleGuess_MissingID(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_InvalidJSON verifies a guess request with malformed JSON body returns 400 with "invalid request body".
 func TestHandleGuess_InvalidJSON(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -271,6 +280,7 @@ func TestHandleGuess_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_MethodNotAllowed verifies the guess endpoint returns 405 Method Not Allowed when called with an incorrect HTTP method.
 func TestHandleGuess_MethodNotAllowed(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -285,6 +295,7 @@ func TestHandleGuess_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestHandleGuess_DuplicateGuess verifies that repeating the same wrong guess decrements guesses remaining each time.
 func TestHandleGuess_DuplicateGuess(t *testing.T) {
 	s := store.NewGameStore()
 	words := []string{"APPLE"}
@@ -322,6 +333,7 @@ func TestHandleGuess_DuplicateGuess(t *testing.T) {
 
 // --- JSON response helper tests ---
 
+// TestWriteError_ContentType verifies the writeError helper writes JSON responses with Content-Type: application/json.
 func TestWriteError_ContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeError(w, http.StatusBadRequest, "test error")
@@ -331,6 +343,7 @@ func TestWriteError_ContentType(t *testing.T) {
 	}
 }
 
+// TestWriteJSON_ContentType verifies the writeJSON helper writes JSON responses with Content-Type: application/json.
 func TestWriteJSON_ContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSON(w, http.StatusOK, map[string]string{"key": "value"})
@@ -342,6 +355,7 @@ func TestWriteJSON_ContentType(t *testing.T) {
 
 // --- Postel's Law normalisation tests ---
 
+// TestNormaliseGuess verifies normaliseGuess handles uppercase, lowercase, mixed case, and whitespace trimming correctly.
 func TestNormaliseGuess(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -369,42 +383,9 @@ func TestNormaliseGuess(t *testing.T) {
 	}
 }
 
-func TestValidateGuess(t *testing.T) {
-	tests := []struct {
-		name    string
-		guess   string
-		wantErr string
-	}{
-		{"valid letter", "A", ""},
-		{"valid letter Z", "Z", ""},
-		{"valid letter M", "M", ""},
-		{"empty string", "", "missing guess"},
-		{"too long", "AB", "guess must be a single character"},
-		{"digit", "5", "guess must be a single letter A-Z"},
-		{"special char", "@", "guess must be a single letter A-Z"},
-		{"lowercase after normalisation already done", "a", "guess must be a single letter A-Z"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateGuess(tt.guess)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Errorf("validateGuess(%q) = %v, want nil", tt.guess, err)
-				}
-			} else {
-				if err == nil {
-					t.Errorf("validateGuess(%q) = nil, want %q", tt.guess, tt.wantErr)
-				} else if err.Error() != tt.wantErr {
-					t.Errorf("validateGuess(%q) = %q, want %q", tt.guess, err.Error(), tt.wantErr)
-				}
-			}
-		})
-	}
-}
-
 // --- decodeJSONBody tests ---
 
+// TestDecodeJSONBody_Valid verifies decodeJSONBody successfully parses a well-formed JSON request body with all required fields.
 func TestDecodeJSONBody_Valid(t *testing.T) {
 	body := strings.NewReader(`{"id":"abc","guess":"A"}`)
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -421,6 +402,7 @@ func TestDecodeJSONBody_Valid(t *testing.T) {
 	}
 }
 
+// TestDecodeJSONBody_UnknownFields verifies decodeJSONBody returns an error when the JSON body contains fields not present in the target struct.
 func TestDecodeJSONBody_UnknownFields(t *testing.T) {
 	body := strings.NewReader(`{"id":"abc","guess":"A","extra":"bad"}`)
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -431,6 +413,7 @@ func TestDecodeJSONBody_UnknownFields(t *testing.T) {
 	}
 }
 
+// TestDecodeJSONBody_InvalidJSON verifies decodeJSONBody returns an error for syntactically invalid JSON input.
 func TestDecodeJSONBody_InvalidJSON(t *testing.T) {
 	body := strings.NewReader(`not json`)
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -441,6 +424,7 @@ func TestDecodeJSONBody_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestDecodeJSONBody_PartialJSON verifies decodeJSONBody accepts valid JSON with missing optional fields, zero-filling the omitted fields.
 func TestDecodeJSONBody_PartialJSON(t *testing.T) {
 	body := strings.NewReader(`{"id":"abc"}`) // guess missing — valid JSON, just partial
 	req := httptest.NewRequest(http.MethodPost, "/guess", body)
@@ -461,6 +445,7 @@ func TestDecodeJSONBody_PartialJSON(t *testing.T) {
 
 // TestHandleNewGame_MultipleCreatesIndependent verifies that
 // creating multiple games produces independent states.
+// TestHandleNewGame_MultipleCreatesIndependent verifies creating two games produces unique IDs and independent initial states.
 func TestHandleNewGame_MultipleCreatesIndependent(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE", "ORANGE"})
@@ -481,9 +466,9 @@ func TestHandleNewGame_MultipleCreatesIndependent(t *testing.T) {
 		t.Error("expected unique game IDs")
 	}
 
-	// Both start with 6 guesses and all underscores
-	if r1.GuessesRemaining != 6 || r2.GuessesRemaining != 6 {
-		t.Error("both games should start with 6 guesses")
+	// Both start with game.MaxGuesses guesses and all underscores
+	if r1.GuessesRemaining != game.MaxGuesses || r2.GuessesRemaining != game.MaxGuesses {
+		t.Errorf("both games should start with %d guesses", game.MaxGuesses)
 	}
 	for _, ch := range r1.Current {
 		if ch != '_' {
@@ -501,6 +486,7 @@ func TestHandleNewGame_MultipleCreatesIndependent(t *testing.T) {
 
 // TestHandleGuess_DisallowUnknownFields verifies that requests
 // with extra JSON fields are rejected.
+// TestHandleGuess_DisallowUnknownFields verifies guess requests containing extra JSON fields are rejected with 400.
 func TestHandleGuess_DisallowUnknownFields(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -530,6 +516,7 @@ func TestHandleGuess_DisallowUnknownFields(t *testing.T) {
 // TestEndToEnd_FullGameWin simulates a complete game from
 // creation to winning by guessing all letters.
 // Verifies the word is revealed on win and the game is cleaned up.
+// TestEndToEnd_FullGameWin simulates a full game from creation to win, verifying progressive reveals and cleanup on completion.
 func TestEndToEnd_FullGameWin(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"CAT"})
@@ -603,6 +590,7 @@ func TestEndToEnd_FullGameWin(t *testing.T) {
 // TestEndToEnd_FullGameLoss simulates a complete game from
 // creation to losing by exhausting all guesses.
 // Verifies the word is revealed on loss and the game is cleaned up.
+// TestEndToEnd_FullGameLoss simulates a full game from creation to loss, verifying guesses decrement and word revealed on final wrong guess.
 func TestEndToEnd_FullGameLoss(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"CAT"})
@@ -613,7 +601,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 	var newResp NewGameResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &newResp)
 
-	// 2. Make 6 wrong guesses
+	// 2. Make game.MaxGuesses wrong guesses
 	wrongLetters := []string{"Z", "Y", "X", "W", "V", "U"}
 	var lastResp GuessResponse
 	for i, letter := range wrongLetters {
@@ -623,7 +611,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 		srv.HandleGuess(rec, req)
 		_ = json.Unmarshal(rec.Body.Bytes(), &lastResp)
 
-		expectedRemaining := 5 - i
+		expectedRemaining := game.MaxGuesses - 1 - i
 		if lastResp.GuessesRemaining != expectedRemaining {
 			t.Errorf("after guess %d (%s): guesses_remaining = %d, want %d",
 				i+1, letter, lastResp.GuessesRemaining, expectedRemaining)
@@ -659,6 +647,7 @@ func TestEndToEnd_FullGameLoss(t *testing.T) {
 
 // TestHandleGuess_ConcurrentAccess verifies that concurrent
 // guesses on the same game do not cause data races.
+// TestHandleGuess_ConcurrentAccess verifies concurrent guesses on the same game do not cause data races and produce consistent state.
 func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"BANANA"})
@@ -695,9 +684,9 @@ func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 	if g.Current != "_A_A_A" {
 		t.Errorf("expected _A_A_A after concurrent 'A' guesses, got %q", g.Current)
 	}
-	// GuessesRemaining should still be 6 (correct guess, no penalties)
-	if g.GuessesRemaining != 6 {
-		t.Errorf("expected 6 guesses remaining, got %d", g.GuessesRemaining)
+	// GuessesRemaining should still be game.MaxGuesses (correct guess, no penalties)
+	if g.GuessesRemaining != game.MaxGuesses {
+		t.Errorf("expected %d guesses remaining, got %d", game.MaxGuesses, g.GuessesRemaining)
 	}
 	// Verify the game is still in progress and consistent
 	if g.Status != game.StatusInProgress {
@@ -707,6 +696,7 @@ func TestHandleGuess_ConcurrentAccess(t *testing.T) {
 
 // TestHandleGuess_ConcurrentDifferentGames verifies that
 // concurrent guesses on different games are independent.
+// TestHandleGuess_ConcurrentDifferentGames verifies concurrent guesses on different games are processed independently without cross-contamination.
 func TestHandleGuess_ConcurrentDifferentGames(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE", "ORANGE"})
@@ -749,13 +739,14 @@ func TestHandleGuess_ConcurrentDifferentGames(t *testing.T) {
 
 	// Game 2 state depends on which word was chosen
 	g2 := s.Get(r2.ID)
-	if g2.GuessesRemaining < 5 || g2.GuessesRemaining > 6 {
+	if g2.GuessesRemaining < game.MaxGuesses-1 || g2.GuessesRemaining > game.MaxGuesses {
 		t.Errorf("game 2: unexpected guesses_remaining %d", g2.GuessesRemaining)
 	}
 }
 
 // TestHandleNewGame_PostelsLaw_RequestBodyIgnored verifies that
 // any body (or no body) is accepted for POST /new.
+// TestHandleNewGame_PostelsLaw_RequestBodyIgnored verifies POST /new tolerates any request body (none, empty JSON, garbage, or extra fields).
 func TestHandleNewGame_PostelsLaw_RequestBodyIgnored(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -795,6 +786,7 @@ func TestHandleNewGame_PostelsLaw_RequestBodyIgnored(t *testing.T) {
 
 // TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace tests combined
 // normalisation: lowercase + surrounding whitespace.
+// TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace verifies a lowercase guess with surrounding whitespace is normalised and correctly resolves.
 func TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -823,6 +815,7 @@ func TestHandleGuess_PostelsLaw_MixedCaseAndWhitespace(t *testing.T) {
 
 // TestHandleGuess_IDUnchangedInResponse verifies the handler echoes
 // back the same game ID in the response.
+// TestHandleGuess_IDUnchangedInResponse verifies the handler returns the same game ID in the guess response as was sent in the request.
 func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -846,6 +839,7 @@ func TestHandleGuess_IDUnchangedInResponse(t *testing.T) {
 
 // TestHandleNewGame_IdentifierError verifies that when ID generation fails,
 // the handler returns a 500 Internal Server Error.
+// TestHandleNewGame_IdentifierError verifies POST /new returns 500 when the injected ID generator returns an error.
 func TestHandleNewGame_IdentifierError(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"}, WithIDGenerator(func() (string, error) {
@@ -870,6 +864,7 @@ func TestHandleNewGame_IdentifierError(t *testing.T) {
 // TestHandleGuess_ApplyGuessError_GameAlreadyWon verifies that
 // a completed game returns 409 Conflict — the game exists but is in
 // a conflicting state (already completed by a concurrent request).
+// TestHandleGuess_ApplyGuessError_GameAlreadyWon verifies guessing on a game already in StatusWon returns 409 Conflict with "game already completed".
 func TestHandleGuess_ApplyGuessError_GameAlreadyWon(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})
@@ -896,6 +891,7 @@ func TestHandleGuess_ApplyGuessError_GameAlreadyWon(t *testing.T) {
 
 // TestHandleGuess_ApplyGuessError_GameAlreadyLost verifies the same
 // 409 Conflict for a game that has already been lost.
+// TestHandleGuess_ApplyGuessError_GameAlreadyLost verifies guessing on a game already in StatusLost returns 409 Conflict with "game already completed".
 func TestHandleGuess_ApplyGuessError_GameAlreadyLost(t *testing.T) {
 	s := store.NewGameStore()
 	srv := NewServer(s, []string{"APPLE"})

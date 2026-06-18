@@ -91,10 +91,16 @@ func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Postel's Law: normalise before validation
+	// Postel's Law: normalise before validation.
+	// String-level checks (empty, too long) stay in the handler.
+	// Character-level validation (A-Z) is delegated to the game's validateRune.
 	guess := normaliseGuess(req.Guess)
-	if err := validateGuess(guess); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	if guess == "" {
+		writeError(w, http.StatusUnprocessableEntity, "missing guess")
+		return
+	}
+	if len(guess) > 1 {
+		writeError(w, http.StatusUnprocessableEntity, "guess must be a single character")
 		return
 	}
 

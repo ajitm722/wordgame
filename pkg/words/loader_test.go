@@ -13,6 +13,7 @@ func (r *errReader) Read(p []byte) (int, error) {
 	return 0, errors.New("read error")
 }
 
+// TestLoadWords_Basic verifies the loader returns words from a reader.
 func TestLoadWords_Basic(t *testing.T) {
 	input := strings.NewReader("apple\norange\nbanana\n123abc\nhéllo\n")
 	words, err := LoadWords(input)
@@ -31,6 +32,7 @@ func TestLoadWords_Basic(t *testing.T) {
 	}
 }
 
+// TestLoadWords_Empty verifies the loader returns an empty slice for empty input.
 func TestLoadWords_Empty(t *testing.T) {
 	words, err := LoadWords(strings.NewReader(""))
 	if err != nil {
@@ -41,6 +43,7 @@ func TestLoadWords_Empty(t *testing.T) {
 	}
 }
 
+// TestLoadWords_Whitespace verifies the loader trims whitespace from lines.
 func TestLoadWords_Whitespace(t *testing.T) {
 	input := strings.NewReader("  apple  \n  ORANGE  \n")
 	words, err := LoadWords(input)
@@ -59,6 +62,7 @@ func TestLoadWords_Whitespace(t *testing.T) {
 	}
 }
 
+// TestLoadWords_FilterNonAlpha verifies the loader filters out words containing non-alphabetic characters.
 func TestLoadWords_FilterNonAlpha(t *testing.T) {
 	input := strings.NewReader("hello\nh3llo\nhe'llo\nhéllo\n")
 	words, err := LoadWords(input)
@@ -75,6 +79,7 @@ func TestLoadWords_FilterNonAlpha(t *testing.T) {
 	}
 }
 
+// TestLoadWords_MixedCase verifies the loader uppercases all returned words.
 func TestLoadWords_MixedCase(t *testing.T) {
 	input := strings.NewReader("Apple\nORANGE\nBanana\n")
 	words, err := LoadWords(input)
@@ -93,6 +98,7 @@ func TestLoadWords_MixedCase(t *testing.T) {
 	}
 }
 
+// TestLoadWords_SingleLetter verifies the loader accepts single-letter words.
 func TestLoadWords_SingleLetter(t *testing.T) {
 	input := strings.NewReader("a\nb\nc\n")
 	words, err := LoadWords(input)
@@ -113,6 +119,7 @@ func TestLoadWords_SingleLetter(t *testing.T) {
 
 // --- SRP validation tests ---
 
+// TestIsValidWord verifies isValidWord rejects empty, numeric, hyphenated, accented, lowercased, and spaced words.
 func TestIsValidWord(t *testing.T) {
 	tests := []struct {
 		word  string
@@ -140,9 +147,7 @@ func TestIsValidWord(t *testing.T) {
 	}
 }
 
-// TestLoadWords_ScannerError verifies that when the underlying reader
-// returns an error (making bufio.Scanner.Err() non-nil), the error is
-// propagated to the caller.
+// TestLoadWords_ScannerError verifies scanner read errors propagate to the caller.
 func TestLoadWords_ScannerError(t *testing.T) {
 	words, err := LoadWords(&errReader{})
 	if err == nil {

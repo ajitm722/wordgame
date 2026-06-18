@@ -43,10 +43,9 @@ func run(stderr io.Writer) error {
 	// Create HTTP handler server with dependencies injected
 	srv := handler.NewServer(gameStore, wordList)
 
-	// Register routes with gorilla/mux
+	// Register routes — single source of truth
 	r := mux.NewRouter()
-	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
-	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
+	registerRoutes(r, srv)
 
 	// Start listening
 	addr := "localhost:" + port()
@@ -55,6 +54,13 @@ func run(stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// registerRoutes adds all HTTP routes to the given router.
+// Shared by run() and smoke tests so there is a single source of truth.
+func registerRoutes(r *mux.Router, srv *handler.Server) {
+	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
+	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
 }
 
 // port returns the listen port from the PORT environment variable,

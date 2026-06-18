@@ -96,7 +96,7 @@ internal/store     →  Data access (repository)
 | File | Responsibility | Reason to change |
 |------|---------------|------------------|
 | `handler.go` | Orchestration — routes requests through the flow | New endpoint, different orchestration order |
-| `request.go` | JSON decode, Postel's Law normalisation, input validation | New input format, different validation rules |
+| `request.go` | JSON decode, Postel's Law normalisation | New input format, different normalisation rules |
 | `response.go` | JSON response encoding | Different serialisation format |
 | `types.go` | Request/response DTOs | API contract changes |
 
@@ -104,7 +104,7 @@ internal/store     →  Data access (repository)
 
 - Decodes JSON request bodies (`decodeJSONBody` in `request.go`)
 - Applies Postel's Law (`normaliseGuess` in `request.go`)
-- Validates input (`validateGuess` in `request.go`)
+- Validates input (string length checks in `handler.go`; character-level A-Z validation delegated to `game.ApplyGuess` via `errors.Is(err, game.ErrInvalidGuess)`)
 - Encodes JSON responses (`writeJSON`/`writeError` in `response.go`)
 - Orchestrates the flow: store → game logic → snapshot → response (in `handler.go`)
 
@@ -134,7 +134,7 @@ internal/store     →  Data access (repository)
 - Know about HTTP status codes
 - Know about the store
 
-**Why separated:** This is the heart of the domain. It has zero I/O dependencies — just `fmt` and `strings`. You can unit-test every rule in isolation with no mocks. If the game rules change (e.g., 8 guesses instead of 6), you change only this package.
+**Why separated:** This is the heart of the domain. It has zero I/O dependencies — just `fmt` and `strings`. You can unit-test every rule in isolation with no mocks. If the game rules change (e.g., 8 guesses instead of MaxGuesses (6)), you change only this package.
 
 ### `internal/store` — Data Access (Repository)
 
@@ -215,18 +215,24 @@ This is the opposite of Java/C# — the interface lives with the consumer, not t
 5. Handler calls normaliseGuess(req.Guess)  ← request.go: Postel's Law
          │  (TrimSpace + ToUpper)
          ▼
-6. Handler calls validateGuess(guess)       ← request.go: validation
-         │  (single char, A-Z range)
+6. Handler validates string structure            ← handler.go: inline checks
+         │  (empty → "missing guess", len>1 → "too long")
          ▼
-7. Handler calls Store.Get(id)              ← data access
+7. Handler calls Store.Get(id)                     ← data access
          │
          ▼
-8. Handler calls Game.ApplyGuess('A')       ← business logic
+8. Handler calls Game.ApplyGuess(rune(guess[0]))   ← business logic
          │  (mu.Lock → validateInProgress → validateRune
          │   → isCorrectGuess → applyCorrectGuess/applyWrongGuess
          │   → mu.Unlock)
+         │
+         │  Note: validateRune owns A-Z character validation.
+         │  The handler catches ErrInvalidGuess via errors.Is
+         │  and returns 422. The handler's own length checks
+         │  (empty, too-long) prevent broken runes from ever
+         │  reaching the game.
          ▼
-9. Handler calls Game.Snapshot()            ← thread-safe read
+9. Handler calls Game.Snapshot()                   ← thread-safe read
          │
          ▼
 10. If game won/lost:
@@ -241,32 +247,122 @@ This is the opposite of Java/C# — the interface lives with the consumer, not t
 
 **Single-responsibility flow within each package:**
 
-- `handler.go` orchestrates but doesn't validate or serialise — that's `request.go` and `response.go`'s jobs
+- `handler.go` orchestrates — string validation (empty, too-long) is inline. A-Z validation is delegated to `game.ApplyGuess` via `errors.Is(err, game.ErrInvalidGuess)`. JSON decode/serialise lives in `request.go`/`response.go`.
 - `game.go`'s `ApplyGuess` delegates to five sub-methods: `validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess` — each has exactly one reason to change
-- `cmd/wordgame/main.go` defers file opening to `loadWordList()` — `main()` is pure orchestration
+- `cmd/wordgame/main.go` — `main()` is a thin wrapper; startup logic lives in `run(stderr)` for testability
+
+---
+
+## Build Order
+
+Build bottom-up — each step depends only on packages already built:
+
+| Step | Package | File | What to build |
+|------|---------|------|---------------|
+| 1 | `pkg/identifier/` | `id.go` | `GenerateIdentifier() (string, error)` — UUID v4 via `fmt.Errorf` + `%w` |
+| 2 | `pkg/words/` | `loader.go` | `LoadWords(r io.Reader) ([]string, error)` — decoupled from filesystem |
+| 3 | `internal/game/` | `game.go` | `Game` struct, `NewGame()`, `ApplyGuess(rune)` — pure business logic |
+| 4 | `internal/store/` | `store.go` | `GameStore` with `sync.RWMutex` — `Get`, `Save`, `Delete` |
+| 5 | `internal/handler/` | `handler.go`, `request.go`, `response.go`, `types.go` | `Server` struct (DI), handlers, Postel's Law, JSON helpers, DTOs |
+| 6 | `cmd/wordgame/` | `main.go` | Open `words.txt`, wire everything, register routes, `ListenAndServe` |
+
+---
+
+## Game Method Responsibility Table
+
+`ApplyGuess` is an orchestrator — it delegates to five single-responsibility methods. Each has exactly one reason to change:
+
+| Method | Responsibility |
+|--------|---------------|
+| `validateInProgress` | Precondition: game not already won/lost |
+| `validateRune` | Defensive: guess is `[A-Z]` |
+| `isCorrectGuess` | Match: does the letter appear in the word? |
+| `applyCorrectGuess` | Mutate: reveal letter + detect win |
+| `applyWrongGuess` | Mutate: decrement guess + detect loss |
+
+Sentinel errors (`ErrGameCompleted`, `ErrInvalidGuess`) allow callers to use `errors.Is` for precise matching.
+
+---
+
+## Entry Point Wiring
+
+`cmd/wordgame/main.go` — `main()` delegates to `run(stderr)`:
+
+1. Opens `words.txt` via `os.Open`
+2. Loads words with `words.LoadWords(r io.Reader)`
+3. Creates `store.NewGameStore()`
+4. Creates `handler.NewServer(store, words)` with injected dependencies
+5. Registers routes with `gorilla/mux` (`POST /new`, `POST /guess`)
+6. Starts `http.ListenAndServe` on `localhost:1337` (or `PORT` env var)
+
+`main()` is a thin wrapper: if `run()` returns an error, it calls `log.Fatal`. All startup messages go through a custom logger wired to the injected `stderr` writer.
 
 ---
 
 ## Concurrency Model
 
-```
-HTTP Request 1 ──→ Store.Get() [RLock] ──→ Game.Mutex [acquired]
-HTTP Request 2 ──→ Store.Get() [RLock] ──→ Game.Mutex [waits]
+Two-level locking: `GameStore.RWMutex` protects the game map, `Game.Mutex` protects a single game's state.
 
-                    Different game IDs:
-HTTP Request 1 ──→ Store.Get("abc") ──→ Game-abc.Mutex [acquired]
-HTTP Request 2 ──→ Store.Get("xyz") ──→ Game-xyz.Mutex [acquired]
-                    ↑ no contention — different games
+### Same game, concurrent guesses
+
+```mermaid
+sequenceDiagram
+    participant R1 as Request 1
+    participant R2 as Request 2
+    participant Handler as handler
+    participant Store as GameStore<br/>(sync.RWMutex)
+    participant Game as Game: "abc"<br/>(sync.Mutex)
+
+    par Concurrent store reads (RLock allows multiple readers)
+        R1->>Store: Get("abc") ← RLock (shared — ok)
+        Store-->>R1: *game
+    and
+        R2->>Store: Get("abc") ← RLock (shared — ok)
+        Store-->>R2: *game
+    end
+
+    R1->>Game: ApplyGuess('A') → Lock (acquired)
+    R2->>Game: ApplyGuess('A') → Lock (waits)
+    Game-->>R1: nil (no error, guess applied)
+    Game->>Game: Unlock
+    R1-->>R1: 200 {current: "_A__", guesses_remaining: MaxGuesses}
+
+    Game-->>R2: nil (no error, sees R1's result)
+    Game->>Game: Unlock
+    R2-->>R2: 200 {current: "_A__", guesses_remaining: MaxGuesses}
+```
+
+### Different games, no contention
+
+```mermaid
+sequenceDiagram
+    participant R1 as Request 1
+    participant R2 as Request 2
+    participant GameA as Game: "abc"<br/>(sync.Mutex)
+    participant GameB as Game: "xyz"<br/>(sync.Mutex)
+
+    par Fully parallel — different mutexes
+        R1->>GameA: ApplyGuess('A') → Lock
+        GameA-->>R1: nil (no error)
+        R1-->>R1: 200 {current: "A___", guesses_remaining: MaxGuesses}
+    and
+        R2->>GameB: ApplyGuess('B') → Lock
+        GameB-->>R2: nil (no error)
+        R2-->>R2: 200 {current: "____", guesses_remaining: MaxGuesses-1}
+    end
 ```
 
 **Two-level locking:**
 
-1. `GameStore.RWMutex` — protects the `games` map (add/remove/lookup)
-2. `Game.Mutex` — protects a single game's state (current, guesses, status)
+| Lock | Protects | Acquired by |
+|------|----------|-------------|
+| `GameStore.RWMutex` (RLock) | The `games` map during lookups | `Store.Get` |
+| `GameStore.RWMutex` (Lock) | The `games` map during mutations | `Store.Save`, `Store.Delete` |
+| `Game.Mutex` (Lock) | A single game's state | `Game.ApplyGuess`, `Game.Snapshot` |
 
 This means:
 
-- Creating/deleting games locks the store
-- Looking up a game allows concurrent reads
-- Guessing on the *same* game serialises (one guess at a time)
-- Guessing on *different* games runs fully in parallel
+- Looking up games is concurrent — `RWMutex.RLock` allows many readers
+- Creating or deleting a game briefly blocks new lookups — `RWMutex.Lock` is exclusive
+- Guessing on the **same** game serialises — `Game.Mutex` ensures one guess at a time
+- Guessing on **different** games runs fully in parallel — each game has its own mutex

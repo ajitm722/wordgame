@@ -12,11 +12,11 @@
 6. [Postel's Law — Be Liberal in What You Accept](#6-postels-law--be-liberal-in-what-you-accept)
 7. [Sequence Diagrams](#7-sequence-diagrams)
 8. [Data Model & In-Memory State](#8-data-model--in-memory-state)
-9. [Implementation Guide](#9-implementation-guide)
-10. [Modern Go Best Practices](#10-modern-go-best-practices)
-11. [Testing Strategy](#11-testing-strategy)
-12. [Makefile & Deployment](#12-makefile--deployment)
-13. [SDE1 Checklist](#13-sde1-checklist)
+9. [Modern Go Best Practices](#9-modern-go-best-practices)
+10. [Testing Strategy](#10-testing-strategy)
+11. [Makefile & Deployment](#11-makefile--deployment)
+12. [Smoke Tests](#12-smoke-tests)
+13. [Linting and Formatting](#13-linting-and-formatting)
 
 ---
 
@@ -37,12 +37,13 @@ The codebase follows standard Go project layout conventions:
 wordgame-main/
 ├── cmd/
 │   └── wordgame/
-│       └── main.go                  ← Entry point — wires deps, starts server (gorilla/mux)
+│       ├── main.go                  ← Entry point — wires deps, starts server (gorilla/mux)
+│       └── smoke_test.go            ← End-to-end HTTP smoke tests (httptest.Server)
 ├── internal/                        ← Private application code (not importable externally)
 │   ├── handler/
-│   │   ├── handler.go               ← HTTP handlers: POST /new, POST /guess
+│   │   ├── handler.go               ← HTTP handlers + inline string validation
 │   │   ├── types.go                 ← DTOs: NewGameResponse, GuessRequest, etc.
-│   │   ├── request.go               ← JSON decode, normaliseGuess, validateGuess
+│   │   ├── request.go               ← JSON decode, normaliseGuess (Postel's Law)
 │   │   ├── response.go              ← writeJSON, writeError helpers
 │   │   └── handler_test.go
 │   ├── game/
@@ -58,11 +59,13 @@ wordgame-main/
 │   └── identifier/
 │       ├── id.go                    ← GenerateIdentifier() — UUID v4 generation
 │       └── id_test.go
-├── Makefile                         ← Build, test, coverage & game interaction targets
+├── Makefile                         ← Build, test, coverage, linting & game interaction targets
+├── .golangci.yml                    ← Linter config (errcheck, govet, staticcheck, unparam)
 ├── words.txt                        ← Word dictionary data file (unchanged)
-├── go.mod                           ← Go 1.24, minimal deps (google/uuid only)
+├── go.mod                           ← Go 1.24, minimal deps (google/uuid, gorilla/mux)
 ├── go.sum
 ├── Procfile
+├── code-structure.md                ← Domain model & package dependency documentation
 ├── README.md
 └── docs.md                          ← This file
 ```
@@ -81,7 +84,7 @@ wordgame-main/
 
 - The server must select a **random** word from the filtered word list.
 - The word must be chosen with **uniform probability** across all loaded words.
-- Initial `guesses_remaining` must always be **6**.
+- Initial `guesses_remaining` must always be **`MaxGuesses`** (defined in `internal/game/game.go`, currently 6).
 - The `current` board state must be a string of **underscores** (`_`), one per character in the word.
   - Example: word = `"APPLE"` → `"_____"` (length 5).
 - A **new UUID v4** must be generated for each game.
@@ -121,20 +124,7 @@ wordgame-main/
 
 ### FR-8: Server Address
 
-- Server must listen on `http://localhost:1337` (or `PORT` env var for Heroku).
-
-### FR-9: Word Loader Must Be Filesystem-Decoupled
-
-- The word loader must accept an **`io.Reader`**, not a file path.
-- This lets tests pass `strings.NewReader("APPLE\nORANGE\n")` instead of needing real files.
-- The caller (`cmd/wordgame/main.go`) is responsible for opening the file.
-
-### FR-10: Postel's Law for Input (see Section 6)
-
-- The `/guess` endpoint must be **liberal in what it accepts**:
-  - Lowercase letters → normalise to uppercase.
-  - Whitespace around the guess → trim it.
-  - Only reject truly invalid input (empty, multi-character, non-alpha).
+- Server must listen on `http://localhost:1337` (or `PORT` env var).
 
 ---
 
@@ -155,7 +145,7 @@ Content-Type: application/json   (optional — body is ignored)
 |-------|------|-------------|
 | `id` | `string` | UUID v4 game identifier |
 | `current` | `string` | Board state — only underscores, length = word length |
-| `guesses_remaining` | `int` | Always `6` for a new game |
+| `guesses_remaining` | `int` | Always `MaxGuesses` (6) for a new game |
 
 ```json
 {
@@ -233,29 +223,55 @@ On win or loss, the `word` field is also included:
 
 ### 4.2 Guess Processing Algorithm
 
-The handler normalises input, then passes a clean `rune` to the game logic. Full flow:
+The handler normalises input, validates string structure, then delegates to the game for character-level rules and win/loss detection:
 
-```
-1. Receive POST /guess with JSON body
-2. Decode JSON → {id, guess}
-3. NORMALISE guess (Postel's Law — see Section 6):
-   a. Trim whitespace: strings.TrimSpace(guess)
-   b. Convert to uppercase: strings.ToUpper(guess)
-4. LOOKUP game by id → if not found, return 400 error
-5. If game is already COMPLETED (won/lost) → return 400 error
-6. VALIDATE normalised guess:
-   a. Must be exactly 1 character
-   b. Must be in range [A-Z]
-7. If guess is CORRECT:
-   a. Replace ALL '_' at matching positions with the letter
-   b. Do NOT change guesses_remaining
-8. If guess is WRONG:
-   a. Decrement guesses_remaining by 1 (every time — even if guessed before)
-   b. Do NOT change current
-9. CHECK win: if current == word → mark game won
-10. CHECK loss: if guesses_remaining == 0 → mark game lost
-11. If game completed → optionally delete from store
-12. RETURN {id, current, guesses_remaining}
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Handler as handler.go
+    participant Store as store.go
+    participant Game as game.go
+
+    Client->>Handler: POST /guess {id, guess}
+
+    Note over Handler: Decode & Normalise
+    Handler->>Handler: decodeJSONBody(r, &req)
+    Handler->>Handler: normaliseGuess(req.Guess)<br/>→ TrimSpace + ToUpper
+
+    Note over Handler: String validation (handler-owned)
+    Handler->>Handler: guess == "" ? → 422 "missing guess"
+    Handler->>Handler: len(guess) > 1 ? → 422 "guess must be a single character"
+
+    Note over Handler,Game: Game state lookup
+    Handler->>Store: Store.Get(req.ID)
+    Store-->>Handler: *game or nil
+    Handler->>Handler: nil ? → 404 "game not found"
+
+    Note over Handler,Game: ApplyGuess — business logic (owns A-Z validation)
+    Handler->>Game: g.ApplyGuess(rune(guess[0]))
+    Game->>Game: mu.Lock()
+    Game->>Game: validateInProgress() → ErrGameCompleted?
+    Game->>Game: validateRune(rune) → ErrInvalidGuess?
+    Game->>Game: isCorrectGuess → applyCorrectGuess / applyWrongGuess
+    Game->>Game: Win? → StatusWon. Loss? → StatusLost.
+    Game->>Game: mu.Unlock()
+    Game-->>Handler: nil / ErrGameCompleted / ErrInvalidGuess
+
+    Note over Handler: error dispatch via errors.Is
+    alt ErrGameCompleted
+        Handler-->>Client: 409 Conflict "game already completed"
+    else ErrInvalidGuess
+        Handler-->>Client: 422 Unprocessable Entity "guess must be a single A-Z character"
+    else internal error (defense-in-depth)
+        Handler-->>Client: 500 Internal Server Error
+    else no error — guess applied
+        Handler->>Game: g.Snapshot()
+        alt game ended (won or lost)
+            Handler->>Handler: resp.Word = g.Word
+            Handler->>Store: Store.Delete(g.ID)
+        end
+        Handler-->>Client: 200 {id, current, guesses_remaining, word?}
+    end
 ```
 
 ### 4.3 Every Guess Is Independent
@@ -274,10 +290,10 @@ The handler normalises input, then passes a clean `rune` to the game logic. Full
 |----------|-------------|----------|
 | Game ID not found | `404 Not Found` | `{"error": "game not found"}` |
 | Guessing on a completed game | `404 Not Found` | `{"error": "game not found"}` (game is deleted on completion) |
-| Concurrent request completes game before ApplyGuess acquires lock | `409 Conflict` | `{"error": "game already completed"}` |
-| Missing `guess` or empty after trim | `422 Unprocessable Entity` | `{"error": "guess must be a single character"}` |
+| Concurrent request completes game before ApplyGuess acquires lock | `409 Conflict` | `{"error": "game already completed"}` — [see §7.9.2](#792-race-condition--game-completed-by-concurrent-request) |
+| Missing `guess` or empty after trim | `422 Unprocessable Entity` | `{"error": "missing guess"}` |
 | `guess` is more than 1 character | `422 Unprocessable Entity` | `{"error": "guess must be a single character"}` |
-| `guess` is not alpha (e.g. "5", "é", "@") | `422 Unprocessable Entity` | `{"error": "guess must be a single letter A-Z"}` |
+| `guess` is not alpha (e.g. "5", "é", "@") | `422 Unprocessable Entity` | `{"error": "guess must be a single A-Z character"}` |
 | Missing `id` in request | `400 Bad Request` | `{"error": "missing game id"}` |
 | Request body not valid JSON | `400 Bad Request` | `{"error": "invalid request body"}` |
 | Unknown JSON fields in request | `400 Bad Request` | `{"error": "invalid request body"}` |
@@ -327,20 +343,6 @@ func normaliseGuess(guess string) string {
     return strings.ToUpper(strings.TrimSpace(guess))
 }
 
-// validateGuess checks that the guess string is a single uppercase A-Z letter.
-func validateGuess(guess string) error {
-    if guess == "" {
-        return errors.New("missing guess")
-    }
-    if len(guess) != 1 {
-        return errors.New("guess must be a single character")
-    }
-    if !game.LetterRegex.MatchString(guess) {
-        return errors.New("guess must be a single letter A-Z")
-    }
-    return nil
-}
-
 // internal/handler/handler.go — handler orchestrates the flow
 
 func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
@@ -349,27 +351,41 @@ func (s *Server) HandleGuess(w http.ResponseWriter, r *http.Request) {
     // Postel's Law: normalise before you validate
     guess := normaliseGuess(req.Guess)
 
-    // Now validate the clean input (single responsibility)
-    if err := validateGuess(guess); err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
+    // String-level checks (empty, too long) stay in the handler
+    if guess == "" {
+        writeError(w, http.StatusUnprocessableEntity, "missing guess")
+        return
+    }
+    if len(guess) > 1 {
+        writeError(w, http.StatusUnprocessableEntity, "guess must be a single character")
         return
     }
 
-    // Pass the clean rune to game logic
-    err := game.ApplyGuess(rune(guess[0]))
+    // Character-level validation (A-Z) is delegated to the game's
+    // validateRune inside ApplyGuess, caught via errors.Is below
+    if err := g.ApplyGuess(rune(guess[0])); err != nil {
+        if errors.Is(err, game.ErrGameCompleted) {
+            writeError(w, http.StatusConflict, err.Error())
+        } else if errors.Is(err, game.ErrInvalidGuess) {
+            writeError(w, http.StatusUnprocessableEntity, err.Error())
+        } else {
+            writeError(w, http.StatusInternalServerError, "internal error")
+        }
+        return
+    }
     // ...
 }
 ```
 
-**Why extract normaliseGuess and validateGuess?** Each function has exactly one reason to change:
+**Why split validation between handler and game?** Each layer owns the checks it's responsible for:
 
 - `normaliseGuess` changes if normalisation rules change (e.g., strip diacritics)
-- `validateGuess` changes if validation rules change (e.g., allow wildcards)
-- The handler is pure orchestration — it doesn't know *how* normalisation or validation works, only that it must happen
+- The handler validates **string structure**: empty, too long
+- The game validates **character content**: A-Z via `validateRune` inside `ApplyGuess`, dispatched with `errors.Is(err, game.ErrInvalidGuess)`
 
 ### Where it does NOT apply
 
-- The game logic (`internal/game/game.go`) receives a `rune` that is already validated `[A-Z]`. It does **not** need to re-normalise.
+- The game logic (`internal/game/game.go`) validates its own rune input — defensive by design, so even callers bypassing the handler are safe.
 - The word loader (`pkg/words/loader.go`) already uppercases everything. No Postel's Law needed there.
 
 ---
@@ -387,10 +403,10 @@ sequenceDiagram
     Client->>Handler: POST /new
     Handler->>Handler: identifier.GenerateIdentifier() → UUID
     Handler->>Handler: pick random word from loaded list
-    Handler->>Handler: create Game{id, word, current:"_____", guesses:6}
+    Handler->>Handler: create Game{id, word, current:"_____", guesses:MaxGuesses}
     Handler->>Store: Store.Save(game)
     Store-->>Handler: ok
-    Handler-->>Client: 200 {id, current, guesses_remaining: 6}
+    Handler-->>Client: 200 {id, current, guesses_remaining: MaxGuesses}
 ```
 
 ### 7.2 Guess Flow — With Postel's Law Normalisation
@@ -410,15 +426,15 @@ sequenceDiagram
     Handler->>Handler: Validate: len=1, A-Z (ok)
 
     Handler->>Store: Store.Get(id)
-    Store-->>Handler: game{word:"APPLE", current:"_____", guesses:6}
+    Store-->>Handler: game{word:"APPLE", current:"_____", guesses:MaxGuesses}
     Handler->>Game: game.ApplyGuess('A')
 
     alt Correct guess
         Game->>Game: Reveal 'A' → current = "A____"
-        Game->>Game: guesses_remaining unchanged (6)
+        Game->>Game: guesses_remaining unchanged (MaxGuesses)
         Game->>Game: Check win: not yet
     else Wrong guess
-        Game->>Game: guesses_remaining-- (5)
+        Game->>Game: guesses_remaining-- (MaxGuesses-1)
         Game->>Game: current unchanged
         Game->>Game: Check loss: not yet
     end
@@ -538,21 +554,73 @@ sequenceDiagram
 
     Client->>Handler: POST /guess<br/>{id: "xxx", guess: "P"}
     Handler->>Store: Store.Get(id)
-    Store-->>Handler: game{current:"_PP__", guesses:6}
+    Store-->>Handler: game{current:"_PP__", guesses:MaxGuesses}
 
     Handler->>Game: game.ApplyGuess('P')
     Game->>Game: mu.Lock()
     Game->>Game: ContainsRune("APPLE", 'P')? Yes (ok)
     Game->>Game: Reveal 'P' at positions → "_PP__" (unchanged)
-    Game->>Game: GuessesRemaining unchanged (6)
+    Game->>Game: GuessesRemaining unchanged (MaxGuesses)
     Game->>Game: mu.Unlock()
     Game-->>Handler: nil
 
-    Handler-->>Client: 200 {id, current:"_PP__", guesses_remaining:6}
+    Handler-->>Client: 200 {id, current:"_PP__", guesses_remaining:MaxGuesses}
     Note over Client,Handler: Board unchanged, no penalty
 ```
 
-### 7.7 Concurrent Access
+### 7.7 Error Flow — Game Not Found
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Handler as internal/handler
+    participant Store as internal/store
+
+    Client->>Handler: POST /guess<br/>{id: "nonexistent", guess: "A"}
+    Handler->>Handler: Normalise → "A", validate (ok)
+    Handler->>Store: Store.Get("nonexistent")
+    Store->>Store: mu.RLock()
+    Store-->>Handler: nil (not found)
+    Store->>Store: mu.RUnlock()
+
+    Handler-->>Client: 404 {error: "game not found"}
+```
+
+### 7.8 Error Flow — Invalid JSON
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Handler as internal/handler
+
+    Note over Client,Handler: Malformed JSON
+    Client->>Handler: POST /guess<br/>"not json"
+    Handler->>Handler: json.Decode → error
+    Handler-->>Client: 400 {error: "invalid request body"}
+
+    Note over Client,Handler: Unknown field (DisallowUnknownFields)
+    Client->>Handler: POST /guess<br/>{id: "xxx", guess: "A", extra: "bad"}
+    Handler->>Handler: json.Decode + DisallowUnknownFields → error
+    Handler-->>Client: 400 {error: "invalid request body"}
+```
+
+### 7.9 Concurrent Access & Race Condition
+
+Because a game is identified by a shared UUID, multiple players can load the
+same game ID into separate browsers (or clients) and solve the word together. Each guess is an independent HTTP request — the server processes them
+in arrival order, serialised by `Game.Mutex`. The server handles this correctly
+at two levels:
+
+1. **No game completion** — multiple concurrent guesses on an active game are
+   serialised by `Game.Mutex`. Both requests see a consistent game state.
+2. **With game completion** — if one request finishes the game (win/loss) while
+   another is in flight, `validateInProgress()` catches the changed status and
+   returns `ErrGameCompleted` → `409 Conflict`.
+
+This works without any WebSocket, polling, or coordination protocol — plain
+HTTP, safe concurrency, correct state transitions.
+
+#### 7.9.1 Basic Concurrent Access — No Game Completion
 
 ```mermaid
 sequenceDiagram
@@ -583,7 +651,6 @@ sequenceDiagram
     Note over Game: G1 completes, releases mu
     Game->>Game: mu.Unlock()
     Note over Game: G2 acquires mu
-    Game->>Game: ContainsRune("BANANA", 'A')? Yes → reveal
     Game->>Game: mu.Unlock()
 
     par Response
@@ -595,29 +662,7 @@ sequenceDiagram
     Note over G1,G2: No data race. G2 sees G1's result.
 ```
 
-### 7.8 Error Flow — Game Not Found
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Handler as internal/handler
-    participant Store as internal/store
-
-    Client->>Handler: POST /guess<br/>{id: "nonexistent", guess: "A"}
-    Handler->>Handler: Normalise → "A", validate (ok)
-    Handler->>Store: Store.Get("nonexistent")
-    Store->>Store: mu.RLock()
-    Store-->>Handler: nil (not found)
-    Store->>Store: mu.RUnlock()
-
-    Handler-->>Client: 404 {error: "game not found"}
-```
-
-### 7.9 Race Condition — Game Completed by Concurrent Request
-
-When two requests reach the same game at the same time, one may win or lose
-before the other. The game's mutex serialises `ApplyGuess`, and the handler
-uses `errors.Is` to return the appropriate status code.
+#### 7.9.2 Race Condition — Game Completed by Concurrent Request
 
 ```mermaid
 sequenceDiagram
@@ -675,24 +720,6 @@ sequenceDiagram
 - `ApplyGuess` returns `ErrGameCompleted` → handler uses `errors.Is` → **409 Conflict**
 - Any subsequent request on that ID reaches a nil `store.Get` → **404 Not Found**
 
-### 7.10 Error Flow — Invalid JSON
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Handler as internal/handler
-
-    Note over Client,Handler: Malformed JSON
-    Client->>Handler: POST /guess<br/>"not json"
-    Handler->>Handler: json.Decode → error
-    Handler-->>Client: 400 {error: "invalid request body"}
-
-    Note over Client,Handler: Unknown field (DisallowUnknownFields)
-    Client->>Handler: POST /guess<br/>{id: "xxx", guess: "A", extra: "bad"}
-    Handler->>Handler: json.Decode + DisallowUnknownFields → error
-    Handler-->>Client: 400 {error: "invalid request body"}
-```
-
 ## 8. Data Model & In-Memory State
 
 ### 8.1 Game Struct (`internal/game/game.go`)
@@ -703,7 +730,7 @@ type Game struct {
     ID               string    // UUID v4
     Word             string    // The chosen word (uppercase, e.g. "APPLE")
     Current          string    // Board state with underscores (e.g. "_PP__")
-    GuessesRemaining int       // Starts at 6, counts down on every wrong guess
+    GuessesRemaining int       // Starts at MaxGuesses, counts down on every wrong guess
     Status           Status    // InProgress, Won, or Lost
 
     mu sync.Mutex              // Protects all fields from concurrent access
@@ -796,90 +823,21 @@ stateDiagram-v2
 
 ---
 
-## 9. Implementation Guide
+> See [code-structure.md](./code-structure.md) for the implementation guide — build order, package dependency flow, method responsibility table, and entry point wiring.
 
-### 9.1 Package Dependency Flow
-
-```
-cmd/wordgame/main.go
-    │
-    ├── pkg/words/loader.go        ← LoadWords(r io.Reader) []string
-    ├── pkg/identifier/id.go       ← GenerateIdentifier() string
-    ├── internal/store/store.go    ← NewGameStore() *GameStore
-    ├── internal/game/game.go      ← NewGame(), ApplyGuess()
-    └── internal/handler/handler.go ← NewServer(), HandleNewGame(), HandleGuess()
-```
-
-**Key rule:** `internal/` packages can import `pkg/`. `cmd/` can import both. Nothing outside this module can import `internal/` (Go enforces this).
-
-### 9.2 Step-by-Step Build Order
-
-Build bottom-up — each step depends only on packages already built:
-
-| Step | Package | File | What to build |
-|------|---------|------|---------------|
-| 1 | `pkg/identifier/` | `id.go` | Export `GenerateIdentifier() (string, error)` — move from `identifier.go`, use `fmt.Errorf` + `%w` |
-| 2 | `pkg/words/` | `loader.go` | Export `LoadWords(r io.Reader) ([]string, error)` — change signature from file path to `io.Reader` |
-| 3 | `internal/game/` | `game.go` | `Game` struct, `NewGame()`, `ApplyGuess(rune)` — pure business logic, no I/O |
-| 4 | `internal/store/` | `store.go` | `GameStore` with `sync.RWMutex` — `Get`, `Save`, `Delete` |
-| 5 | `internal/handler/` | `handler.go`, `request.go`, `response.go`, `types.go` | `Server` struct (DI), handler methods, Postel's Law normalisation, JSON helpers, DTOs |
-| 6 | `cmd/wordgame/` | `main.go` | Open `words.txt`, wire everything, `http.HandleFunc`, `ListenAndServe` |
-
-### 9.3 Core Game Logic — Reference (`internal/game/game.go`)
-
-See the source file for the full implementation. Key design points:
-
-- **Sentinel errors** (`ErrGameCompleted`, `ErrInvalidGuess`) allow callers to use `errors.Is` for precise matching.
-- `ApplyGuess` is an **orchestrator** — it delegates to five single-responsibility methods: `validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`.
-- Each sub-method has one reason to change (see [code-structure.md](./code-structure.md) for the SRP rationale).
-
-| Method | Responsibility |
-|--------|---------------|
-| `validateInProgress` | Precondition: game not already won/lost |
-| `validateRune` | Defensive: guess is `[A-Z]` |
-| `isCorrectGuess` | Match: does the letter appear in the word? |
-| `applyCorrectGuess` | Mutate: reveal letter + detect win |
-| `applyWrongGuess` | Mutate: decrement guess + detect loss |
-
-### 9.4 Handler — Reference (`internal/handler/` — 4 files)
-
-The handler package is split into four files, each with one responsibility. See the source files for the full implementation.
-
-| File | Responsibility | Key exports |
-|------|---------------|-------------|
-| `handler.go` | Orchestration — routes requests, handles game lifecycle | `NewServer`, `HandleNewGame`, `HandleGuess`, `pickWord` |
-| `request.go` | Input parsing & Postel's Law normalisation | `decodeJSONBody`, `normaliseGuess`, `validateGuess` |
-| `response.go` | JSON response encoding | `writeJSON`, `writeError` |
-| `types.go` | Request/response DTOs | `NewGameResponse`, `GuessRequest`, `GuessResponse`, `ErrorResponse` |
-
-### 9.5 Entry Point — Reference (`cmd/wordgame/main.go`)
-
-The entry point is pure orchestration. `main()` wires dependencies in five steps:
-
-1. Calls `loadWordList("words.txt")` to load the dictionary
-2. Creates an in-memory `GameStore`
-3. Creates the HTTP `Server` with injected dependencies
-4. Registers routes with `gorilla/mux`
-5. Starts the HTTP server
-
-File opening and word loading are extracted into `loadWordList()` so that `main()` only changes if the orchestration order changes. See the source file for the full implementation.
-
----
-
-## 10. Modern Go Best Practices
+## 9. Modern Go Best Practices
 
 *(Items that repeat content from previous sections — project layout, `io.Reader`, Postel's Law, `encoding/json`, `sync.RWMutex`, DI — are documented in their dedicated sections above. Only unique items are listed below.)*
 
-### 10.1 Use `const` for Magic Numbers
+### 9.1 Use `const` for Magic Numbers
 
 ```go
 const (
-    InitialGuesses = 6
-    ServerAddr     = "localhost:1337"
+    MaxGuesses = 6
 )
 ```
 
-### 10.2 Error Wrapping — `fmt.Errorf` + `%w`
+### 9.2 Error Wrapping — `fmt.Errorf` + `%w`
 
 ```go
 // Modern Go 1.13+ style (consistent across the codebase):
@@ -889,7 +847,7 @@ return fmt.Errorf("generate game ID: %w", err)
 
 The `%w` verb wraps the original error so callers can use `errors.Is()` and `errors.As()`.
 
-### 10.3 Use `math/rand/v2` (Go 1.21+)
+### 9.3 Use `math/rand/v2` (Go 1.21+)
 
 ```go
 import "math/rand/v2"
@@ -902,70 +860,79 @@ word := words[rand.IntN(len(words))]
 
 ---
 
-## 11. Testing Strategy
+## 10. Testing Strategy
 
-### 11.1 `pkg/words/loader_test.go` — Testing with `strings.NewReader`
+### 10.1 `pkg/words/loader_test.go` — Testing with `strings.NewReader`
 
 Because `LoadWords` takes `io.Reader`, tests pass `strings.NewReader(...)` instead of real files — zero filesystem setup needed. Covers: basic filtering, empty input, whitespace trimming, non-alpha rejection, mixed case normalisation, single-letter words.
 
-### 11.2 `internal/game/game_test.go` — Pure Logic Tests
+### 10.2 `internal/game/game_test.go` — Pure Logic Tests
 
 Tests the game struct directly without HTTP: correct guesses, wrong guesses, win/loss detection, repeat-wrong decrements, repeat-correct no-penalty, invalid runes, completed-game rejection.
 
-### 11.3 `internal/handler/handler_test.go` — HTTP Integration Tests
+### 10.3 `internal/handler/handler_test.go` — HTTP Integration Tests
 
 Sets up a real `GameStore` + word list, creates a `Server`, and uses `httptest.NewRecorder`/`httptest.NewRequest` to send requests end-to-end. Covers: `POST /new` response shape, `POST /guess` correct/wrong, Postel's Law (lowercase, whitespace, mixed), unknown JSON fields, duplicate wrong guesses, end-to-end win/loss flows, concurrent access safety, and every error scenario.
 
-### 11.4 SRP Method Tests
+### 10.4 SRP Method Tests
 
-Every extracted SRP method (`validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`, `normaliseGuess`, `validateGuess`, `decodeJSONBody`) has direct unit tests covering its specific contract. These run alongside the integration tests and improved coverage granularity (game package: 87.5% → 100%).
+Every extracted SRP method (`validateInProgress`, `validateRune`, `isCorrectGuess`, `applyCorrectGuess`, `applyWrongGuess`, `normaliseGuess`, `decodeJSONBody`) has direct unit tests covering its specific contract. These run alongside the integration tests and improved coverage granularity (game package: 87.5% → 100%).
 
-### 11.5 Race Detection
+### 10.5 Coverage Overview
 
-Always run tests with the race detector:
+Running `make test-cover-html` produces the following per-package coverage:
 
-```bash
-go test -race ./...
+```
+ok      github.com/fleetdm/wordgame/cmd/wordgame        0.006s  coverage: 0.0% of statements
+ok      github.com/fleetdm/wordgame/internal/game       0.003s  coverage: 100.0% of statements
+ok      github.com/fleetdm/wordgame/internal/handler    0.006s  coverage: 98.3% of statements
+ok      github.com/fleetdm/wordgame/internal/store      0.003s  coverage: 100.0% of statements
+ok      github.com/fleetdm/wordgame/pkg/identifier      0.003s  coverage: 100.0% of statements
+ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of statements
 ```
 
-### 11.6 Coverage Caveat — Unreachable Defense-in-Depth Branch
+| Package | Coverage | Notes |
+|---------|----------|-------|
+| `cmd/wordgame` | 0.0% | Thin `main()` + `run()` wrapper — smoke tests exercise via `httptest.Server`, not direct calls |
+| `internal/game` | 100.0% | Pure business logic, zero I/O — easy to exhaust |
+| `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)) |
+| `internal/store` | 100.0% | Simple CRUD with `sync.RWMutex` — all paths covered |
+| `pkg/identifier` | 100.0% | Single exported function with wrapped error |
+| `pkg/words` | 100.0% | `io.Reader`-based loader — all filtering paths tested |
 
-The handler's `HandleGuess` method uses a `switch`/`errors.Is` dispatch for
-errors returned by `ApplyGuess`:
+Five of six packages at 100%. The two exceptions are expected:
+
+- **`cmd/wordgame` (0.0%)** — The `main()` and `run()` functions are only exercised via smoke tests which start a real `httptest.Server` rather than calling them directly. This is standard for thin entry-point packages; the business logic it wires together is tested at the `internal/` and `pkg/` levels.
+- **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)).
+
+### 10.6 Coverage Caveat — Defense-in-Depth `default` Branch
+
+The `else` branch in `HandleGuess` is defense-in-depth for unknown `ApplyGuess` errors:
 
 ```go
-switch {
-case errors.Is(err, game.ErrGameCompleted):
-    writeError(w, http.StatusConflict, err.Error())
-case errors.Is(err, game.ErrInvalidGuess):
-    writeError(w, http.StatusUnprocessableEntity, err.Error())
-default:
-    writeError(w, http.StatusInternalServerError, "internal error")
+if err := g.ApplyGuess(rune(guess[0])); err != nil {
+    if errors.Is(err, game.ErrGameCompleted) {
+        writeError(w, http.StatusConflict, err.Error())
+    } else if errors.Is(err, game.ErrInvalidGuess) {
+        writeError(w, http.StatusUnprocessableEntity, err.Error())
+    } else {
+        writeError(w, http.StatusInternalServerError, "internal error")
+    }
+    return
 }
 ```
 
-The `default` branch (`"internal error"` → 500) is **defense-in-depth** —
-it cannot be reached in normal operation because `ApplyGuess` only ever
-returns the two sentinel errors (`ErrGameCompleted`, `ErrInvalidGuess`).
-It exists to protect against future code changes that might introduce a
-third error type without updating the handler.
-
-Because this branch is logically unreachable, it drops `HandleGuess`
-coverage from 100% to ~93%, and total handler package coverage from
-100% to ~96-97%. This is an intentional tradeoff: adding test injection
-to cover a dead branch would introduce test-only complexity with no
-runtime benefit. All other packages (`game`, `store`, `words`,
-`identifier`) remain at 100% coverage.
+It cannot be reached today — `ApplyGuess` only returns `ErrGameCompleted` or `ErrInvalidGuess` — so coverage for `HandleGuess` sits at ~93% and handler package at 98.3%. This is intentional: injecting a fake error to cover a dead branch adds test-only complexity with no runtime benefit.
 
 ---
 
-## 12. Makefile & Deployment
+## 11. Makefile & Deployment
 
-### 12.1 Makefile Overview
+### 11.1 Makefile Overview
 
-The `Makefile` at the project root wraps all common commands behind simple targets. See the file itself for the full implementation; the [Target Reference](#122-target-reference) below summarises every target.
+The `Makefile` at the project root wraps all common commands behind simple targets. See the file itself for the full implementation; the [Target Reference](#112-target-reference) below summarises some important targets.
 
-### 12.2 Target Reference
+### 11.2 Target Reference
 
 | Target | What it does | Example |
 |--------|-------------|---------|
@@ -979,7 +946,7 @@ The `Makefile` at the project root wraps all common commands behind simple targe
 | `make guess ID=<uuid> GUESS=a` | Guesses a letter in a game | `make guess ID=abc GUESS=p` |
 | `make clean` | Removes `bin/` and `coverage.out` | `make clean` |
 
-### 12.3 Typical Development Workflow
+### 11.3 Typical Development Workflow
 
 **Terminal 1 — start the server:**
 
@@ -988,14 +955,14 @@ make run
 # Starting server on http://localhost:1337
 ```
 
-**Terminal 2 — interact with the game:**
+**Terminal 2 — interact with the game (curl commands abstracted):**
 
 ```bash
 # 1. Start a new game and capture the ID
 make new-game
 # {"id":"f8302916-...","current":"________","guesses_remaining":6}
 
-# 2. Make guesses (lowercase, whitespace both work thanks to Postel's Law)
+# 2. Make guesses (Need to copy paste the uuid for now in ID)
 make guess ID=f8302916-... GUESS=a
 # {"id":"f8302916-...","current":"______A_","guesses_remaining":6}
 
@@ -1010,7 +977,7 @@ make guess ID=f8302916-... GUESS=p
 make test-race && make test-cover
 ```
 
-### 12.4 Heroku Deployment
+### 11.4 Heroku Deployment
 
 - The `Procfile` expects the binary at `bin/wordgame`. Use `make build` to generate it:
 
@@ -1031,11 +998,11 @@ make test-race && make test-cover
 
 ---
 
-## 13. Smoke Tests
+## 12. Smoke Tests
 
 End-to-end smoke tests verify the full HTTP stack works together — routes are wired correctly, JSON serialisation is round-trip safe, and the server behaves correctly at the TCP/HTTP protocol level.
 
-### 13.1 What they catch that unit tests miss
+### 12.1 What they catch that unit tests miss
 
 | Bug class | Unit tests | Smoke tests |
 |-----------|:----------:|:-----------:|
@@ -1048,9 +1015,9 @@ End-to-end smoke tests verify the full HTTP stack works together — routes are 
 
 ¹ Handler tests use `httptest.NewRecorder`, which bypasses the HTTP transport layer — content-type headers set via `w.Header().Set()` still appear, but the real HTTP serialisation path is never exercised.
 
-² Via `run()` extraction — `main()` is now a thin wrapper around `run()`, which accepts `args`, `stdout`, `stderr` and returns `error`. This makes it possible to write tests that verify startup failures without calling `log.Fatal`.
+² Via `run()` extraction — `main()` delegates to `run(stderr io.Writer) error`, making startup failures testable without `log.Fatal`.
 
-### 13.2 Test design
+### 12.2 Test design
 
 The smoke test (`cmd/wordgame/smoke_test.go`) uses Go's built-in `httptest.Server` to start a real HTTP server on a random port, then sends actual TCP requests via `http.Post`. The server is configured with a deterministic word list (`["ZZZZ"]`) so every guess outcome is predictable:
 
@@ -1063,10 +1030,10 @@ Four test cases cover the full game lifecycle:
 TestSmokeNewGame_Shape      // POST /new → valid JSON shape
 TestSmokeGuess_Correct      // POST /guess with correct letter
 TestSmokeGuess_Wrong        // POST /guess with wrong letter
-TestSmokeGuess_DeletedGame  // 6 wrong guesses → game deleted → POST /guess → 404
+TestSmokeGuess_DeletedGame  // MaxGuesses wrong guesses → game deleted → POST /guess → 404
 ```
 
-### 13.3 Running smoke tests
+### 12.3 Running smoke tests
 
 ```bash
 # Run only the smoke tests (faster)
@@ -1076,19 +1043,19 @@ make smoke
 make test
 ```
 
-### 13.4 Why `run()` extraction and `WithIDGenerator`?
+### 12.4 How this enables clean smoke tests
 
-Two refactors enabled clean smoke tests:
+Three design decisions make smoke tests straightforward:
 
-1. **`run()` extraction** (`cmd/wordgame/main.go`): The old `main()` called `log.Fatal` on any error — untestable. The new `run(stderr io.Writer)` returns `error`, following the FleetDM pattern for testable server startup. `main()` is now a three-line wrapper.
+1. **`run(stderr io.Writer) error` in `cmd/wordgame/main.go`** — Startup logic lives in `run()` rather than `main()`, so tests can call it and assert on the returned error instead of catching a `log.Fatal`. The `stderr` writer is wired into a custom logger (`log.New(stderr, ...)`), keeping startup messages out of test output and allowing future tests to assert on log lines if needed. `main()` is a thin three-line wrapper that calls `run(os.Stderr)` and passes any error to `log.Fatal`.
 
-   The `stderr` parameter is wired into a custom logger (`log.New(stderr, ...)`) so startup messages are captured in tests rather than polluting terminal output. This keeps test output clean and lets future tests assert on startup log lines.
+2. **`registerRoutes` in `cmd/wordgame/main.go`** — Route definitions live in a single `registerRoutes(r *mux.Router, srv *handler.Server)` package-level function. Both `run()` and smoke tests (which are in the same `package main`) call it, guaranteeing they exercise the exact same routing. No risk of routes drifting apart, and no untested mux dependency polluting the handler package.
 
-2. **Functional options** (`internal/handler/handler.go`): The old `var generateID` was a mutable package-level variable — the test swapped it with a defer/restore pattern that's fragile in concurrent tests. The new `WithIDGenerator(fn)` functional option injects the generator at construction time, exactly like `http.Server` uses `(*testing.T).Run` and FleetDM's `StartServerWithOpts`.
+3. **`WithIDGenerator(fn)` functional option in `internal/handler/handler.go`** — The handler's ID generator is injected at construction time via a functional option, allowing unit tests to swap in a deterministic generator (e.g., to trigger and assert on ID-generation failures) without mutable package globals or fragile defer/restore patterns. Smoke tests deliberately use the **real** UUID generator: they create a game via `POST /new`, extract the generated ID from the JSON response, and use it for subsequent guesses — a true end-to-end exercise of the full pipeline.
 
 ---
 
-## 14. Linting and Formatting
+## 13. Linting and Formatting
 
 The project uses three tiers of static analysis plus a custom `.golangci.yml` config, each wired into its own `make` target:
 
@@ -1099,7 +1066,7 @@ The project uses three tiers of static analysis plus a custom `.golangci.yml` co
 | `make lint` | `golangci-lint` | 80+ linters aggregated (incl. `errcheck`, `govet`, `staticcheck`, **`unparam`**) | In CI / before PR |
 | `make check` | All of the above + tests | Full quality gate — fmt → vet → lint → test | In CI / release |
 
-### 14.1 Quick developer workflow
+### 13.1 Quick developer workflow
 
 ```bash
 # Format, vet, and run tests in one step
@@ -1108,49 +1075,3 @@ make check
 # Or run linting separately if you don't have golangci-lint
 make fmt && make vet && make test
 ```
-
-### 14.2 Installing golangci-lint
-
-```bash
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-```
-
-### 14.3 What was fixed to get clean
-
-Before adding these targets, the codebase had 9 pre-existing issues that `golangci-lint` caught and were fixed:
-
-- **`rand.IntN` → `rand.Intn`** (`handler.go`): `rand.IntN` requires Go 1.22+; module was pinned at Go 1.21. Updated `go.mod` to `go 1.24`.
-- **Unchecked `g.ApplyGuess()`** (`game_test.go`, 4 spots): Setup calls in tests discarded the error return. Added `_ = ` prefix.
-- **Unchecked `json.Unmarshal()`** (`handler_test.go`, 25+ spots): `rec.Body.Bytes()` always contains valid JSON in these contexts. Added `_ = ` prefix.
-- **Unchecked `json.NewEncoder(w).Encode()`** (`response.go`): HTTP response encoding errors are typically network-level and not actionable. Added `_ = ` prefix.
-- **Unused function parameters** (`main.go`, `smoke_test.go`): `unparam` caught `args`/`stdout` in `run()` and an unused return value in `setupSmoke()`. Removed the dead parameters and simplified the signatures.
-
----
-
-## 15. SDE1 Checklist
-
-Use this checklist to verify everything is complete before you submit:
-
-- [ ] `Makefile` — all targets defined: `build`, `run`, `test`, `test-race`, `test-cover`, `test-cover-html`, `smoke`, `fmt`, `vet`, `lint`, `check`, `new-game`, `guess`, `clean`
-- [ ] `pkg/identifier/id.go` — `GenerateIdentifier()` exported, uses `fmt.Errorf` + `%w`
-- [ ] `pkg/words/loader.go` — `LoadWords(r io.Reader)` exported, decoupled from filesystem
-- [ ] `internal/game/game.go` — `Game` struct, `NewGame()`, `ApplyGuess(rune)`, win/loss detection
-- [ ] `internal/store/store.go` — `GameStore` with `sync.RWMutex`, `Get`/`Save`/`Delete`
-- [ ] `internal/handler/` — `handler.go` (orchestration), `types.go` (DTOs), `request.go` (JSON decode, normalise, validate), `response.go` (JSON write helpers)
-  - `Server` struct (DI), `HandleNewGame`, `HandleGuess` with **Postel's Law normalisation**
-- [ ] `cmd/wordgame/main.go` — Opens `words.txt`, wires dependencies, registers routes with **gorilla/mux**, starts server
-- [ ] Postel's Law — handler trims whitespace, uppercases before validation
-- [ ] Input validation — single char `[A-Z]`, game ID exists, game not completed
-- [ ] Every guess is independent — no duplicate tracking; repeat wrong guesses still decrement
-- [ ] Error responses — consistent `{"error": "..."}` JSON format, appropriate HTTP status codes
-- [ ] Thread safety — `sync.Mutex` on `Game`, `sync.RWMutex` on `GameStore`, `Snapshot()` for safe reads
-- [ ] Unit tests per package — word loader, game logic, store, handler
-- [ ] Postel's Law tests — lowercase guess, whitespace guess both handled
-- [ ] Race detector passes — `make test-race` (or `go test -race ./...`)
-- [ ] Coverage report clean — `make test-cover` shows meaningful coverage
-- [ ] Manual CLI testing — `make new-game` + `make guess` flow in two terminals
-- [ ] Smoke tests — `make smoke` passes, covers new-game, correct/wrong guess, deleted game
-- [ ] `run()` extracted from `main()` — `main()` is a thin wrapper, startup errors return `error`
-- [ ] `var generateID` replaced with `WithIDGenerator` functional option — no mutable globals
-- [ ] Linting pipeline — `make check` runs fmt → vet → lint → test, all pass
-- [ ] Go 1.24 — `go.mod` updated to minimum version required by `math/rand/v2`

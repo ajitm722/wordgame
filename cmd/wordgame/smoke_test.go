@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/fleetdm/wordgame/internal/game"
 	"github.com/fleetdm/wordgame/internal/handler"
 	"github.com/fleetdm/wordgame/internal/store"
 )
@@ -24,8 +25,7 @@ func setupSmoke(t *testing.T) string {
 	srv := handler.NewServer(store, []string{"ZZZZ"})
 
 	r := mux.NewRouter()
-	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
-	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
+	registerRoutes(r, srv)
 
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
@@ -58,7 +58,7 @@ func postJSON(t *testing.T, url, path string, body any) (*http.Response, []byte)
 	return resp, respBody
 }
 
-// TestSmokeNewGame_Shape verifies that POST /new returns the correct shape.
+// TestSmokeNewGame_Shape verifies POST /new returns the correct JSON shape via real HTTP.
 func TestSmokeNewGame_Shape(t *testing.T) {
 	url := setupSmoke(t)
 
@@ -72,23 +72,23 @@ func TestSmokeNewGame_Shape(t *testing.T) {
 		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
 	}
 
-	var game handler.NewGameResponse
-	if err := json.Unmarshal(body, &game); err != nil {
+	var newGame handler.NewGameResponse
+	if err := json.Unmarshal(body, &newGame); err != nil {
 		t.Fatalf("unmarshal response: %v\nbody: %s", err, body)
 	}
 
-	if game.ID == "" {
+	if newGame.ID == "" {
 		t.Error("game ID is empty")
 	}
-	if game.Current == "" {
+	if newGame.Current == "" {
 		t.Error("current board is empty")
 	}
-	if game.GuessesRemaining != 6 {
-		t.Errorf("guesses_remaining = %d, want 6", game.GuessesRemaining)
+	if newGame.GuessesRemaining != game.MaxGuesses {
+		t.Errorf("guesses_remaining = %d, want %d", newGame.GuessesRemaining, game.MaxGuesses)
 	}
 }
 
-// TestSmokeGuess_Correct verifies a correct guess updates the board.
+// TestSmokeGuess_Correct verifies a correct guess ("Z") updates the board without decreasing guesses remaining.
 func TestSmokeGuess_Correct(t *testing.T) {
 	url := setupSmoke(t)
 
@@ -125,7 +125,7 @@ func TestSmokeGuess_Correct(t *testing.T) {
 	}
 }
 
-// TestSmokeGuess_Wrong verifies a wrong guess decrements guesses.
+// TestSmokeGuess_Wrong verifies a wrong guess ("A") decrements remaining guesses by 1.
 func TestSmokeGuess_Wrong(t *testing.T) {
 	url := setupSmoke(t)
 
@@ -162,7 +162,7 @@ func TestSmokeGuess_Wrong(t *testing.T) {
 	}
 }
 
-// TestSmokeGuess_DeletedGame verifies that guessing on a completed game returns 404.
+// TestSmokeGuess_DeletedGame verifies guessing on a completed/exhausted game returns 404 with "game not found" error.
 func TestSmokeGuess_DeletedGame(t *testing.T) {
 	url := setupSmoke(t)
 
@@ -173,8 +173,8 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 		t.Fatalf("unmarshal new game: %v", err)
 	}
 
-	// Make 6 wrong guesses to exhaust the game (word is "ZZZZ", guess 'A')
-	for i := 0; i < 6; i++ {
+	// Make game.MaxGuesses wrong guesses to exhaust the game (word is "ZZZZ", guess 'A')
+	for i := 0; i < game.MaxGuesses; i++ {
 		resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
 			ID:    newGame.ID,
 			Guess: "A",
@@ -189,8 +189,8 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 			t.Fatalf("guess %d: unmarshal response: %v\nbody: %s", i+1, err, body)
 		}
 
-		// On the 6th guess, the word should be revealed
-		if i == 5 {
+		// On the final guess, the word should be revealed
+		if i == game.MaxGuesses-1 {
 			if guessResp.Word != "ZZZZ" {
 				t.Errorf("lost game: word = %q, want %q", guessResp.Word, "ZZZZ")
 			}

@@ -14,7 +14,7 @@ In the interest of _respecting your time_, _fairness to all candidates_, and _se
 
 ## The game
 
-When a new game begins, the server chooses a random word from the list of words and sets the guesses remaining to 6. Let's say the server has chosen `APPLE`. The server will return `_____` (6 guesses remaining) to the player, indicating that the chosen word is 5 characters long. Now play progresses as follows:
+When a new game begins, the server chooses a random word from the list of words and sets the guesses remaining to `MaxGuesses` (default 6). Let's say the server has chosen `APPLE`. The server will return `_____` (MaxGuesses guesses remaining) to the player, indicating that the chosen word is 5 characters long. Now play progresses as follows:
 
 1. The player guesses a character that they believe to be in the chosen word.
 
@@ -22,7 +22,7 @@ When a new game begins, the server chooses a random word from the list of words 
 
    b) The player's guess does not match a letter in the chosen word: The server returns the existing string, and decrements the remaining guesses. 
 
-In the above example, imagine the player guesses `P`, now the server returns `_PP__` (6 guesses remaining). Now the player guesses `I`, the server returns `_PP__` (5 guesses remaining).
+In the above example, imagine the player guesses `P`, now the server returns `_PP__` (MaxGuesses guesses remaining). Now the player guesses `I`, the server returns `_PP__` (MaxGuesses-1 guesses remaining).
 
 The game ends either when there are no guesses remaining (player loses), or the player has guessed all of the characters in the word (player wins).
 

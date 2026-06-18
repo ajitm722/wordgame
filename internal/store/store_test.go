@@ -6,6 +6,7 @@ import (
 	"github.com/fleetdm/wordgame/internal/game"
 )
 
+// TestNewGameStore creates a store and verifies its initial state.
 func TestNewGameStore(t *testing.T) {
 	s := NewGameStore()
 	if s == nil {
@@ -16,6 +17,7 @@ func TestNewGameStore(t *testing.T) {
 	}
 }
 
+// TestSaveAndGet saves a game and retrieves it, verifying ID and Word match.
 func TestSaveAndGet(t *testing.T) {
 	s := NewGameStore()
 	g := game.NewGame("test-id", "APPLE")
@@ -34,6 +36,7 @@ func TestSaveAndGet(t *testing.T) {
 	}
 }
 
+// TestGet_NotFound returns nil when querying a non-existent game ID.
 func TestGet_NotFound(t *testing.T) {
 	s := NewGameStore()
 
@@ -43,6 +46,7 @@ func TestGet_NotFound(t *testing.T) {
 	}
 }
 
+// TestDelete removes a game and verifies it is no longer accessible.
 func TestDelete(t *testing.T) {
 	s := NewGameStore()
 	g := game.NewGame("test-id", "APPLE")
@@ -62,6 +66,7 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// TestDelete_NotFound does not panic when deleting a non-existent game.
 func TestDelete_NotFound(t *testing.T) {
 	s := NewGameStore()
 	// Should not panic
@@ -71,6 +76,7 @@ func TestDelete_NotFound(t *testing.T) {
 	}
 }
 
+// TestSave_Overwrite replaces an existing game when saving with the same ID.
 func TestSave_Overwrite(t *testing.T) {
 	s := NewGameStore()
 	g1 := game.NewGame("same-id", "APPLE")
@@ -85,6 +91,7 @@ func TestSave_Overwrite(t *testing.T) {
 	}
 }
 
+// TestLen tracks the count of games across save and delete operations.
 func TestLen(t *testing.T) {
 	s := NewGameStore()
 
