@@ -33,11 +33,11 @@ const (
 
 // Game represents the complete state of a word-guessing game session.
 type Game struct {
-	ID   string // UUID v4 identifier
-	Word string // The chosen word (uppercase, e.g. "APPLE")
-	State       // Embedded — promoted fields: Current, GuessesRemaining, Status
+	ID    string // UUID v4 identifier
+	Word  string // The chosen word (uppercase, e.g. "APPLE")
+	State        // Embedded — promoted fields: Current, GuessesRemaining, Status
 
-	mu sync.Mutex // Protects all fields from concurrent access
+	mu sync.RWMutex // Protects all fields from concurrent access
 }
 
 // State holds a thread-safe snapshot of game state for external readers.
@@ -143,7 +143,7 @@ func (g *Game) applyWrongGuess() {
 // after ApplyGuess has been called. This avoids data races when the
 // handler reads Current and GuessesRemaining for the HTTP response.
 func (g *Game) Snapshot() State {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	return g.State
 }

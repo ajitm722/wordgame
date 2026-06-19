@@ -30,7 +30,7 @@ classDiagram
     class Game {
         +ID string
         +Word string
-        -mu sync.Mutex
+        -mu sync.RWMutex
         +NewGame(id, word) *Game
         +ApplyGuess(guess) error
         +Snapshot() State
@@ -298,7 +298,7 @@ Startup diagnostic messages (word count, listen address) go through a `log.New(s
 
 ## Concurrency Model
 
-Two-level locking: `GameStore.RWMutex` protects the game map, `Game.Mutex` protects a single game's state.
+Two-level locking: `GameStore.RWMutex` protects the game map, `Game.RWMutex` protects a single game's state.
 
 ### Same game, concurrent guesses
 
@@ -308,7 +308,7 @@ sequenceDiagram
     participant R2 as Request 2
     participant Handler as handler
     participant Store as GameStore<br/>(sync.RWMutex)
-    participant Game as Game: "abc"<br/>(sync.Mutex)
+    participant Game as Game: "abc"<br/>(sync.RWMutex)
 
     par Concurrent store reads (RLock allows multiple readers)
         R1->>Store: Get("abc") ← RLock (shared — ok)
@@ -335,8 +335,8 @@ sequenceDiagram
 sequenceDiagram
     participant R1 as Request 1
     participant R2 as Request 2
-    participant GameA as Game: "abc"<br/>(sync.Mutex)
-    participant GameB as Game: "xyz"<br/>(sync.Mutex)
+    participant GameA as Game: "abc"<br/>(sync.RWMutex)
+    participant GameB as Game: "xyz"<br/>(sync.RWMutex)
 
     par Fully parallel — different mutexes
         R1->>GameA: ApplyGuess('A') → Lock
@@ -355,11 +355,12 @@ sequenceDiagram
 |------|----------|-------------|
 | `GameStore.RWMutex` (RLock) | The `games` map during lookups | `Store.Get` |
 | `GameStore.RWMutex` (Lock) | The `games` map during mutations | `Store.Save`, `Store.Delete` |
-| `Game.Mutex` (Lock) | A single game's state | `Game.ApplyGuess`, `Game.Snapshot` |
+| `Game.RWMutex` (Lock) | A single game's state | `Game.ApplyGuess` |
+| `Game.RWMutex` (RLock) | A single game's state (read-only) | `Game.Snapshot` |
 
 This means:
 
 - Looking up games is concurrent — `RWMutex.RLock` allows many readers
 - Creating or deleting a game briefly blocks new lookups — `RWMutex.Lock` is exclusive
-- Guessing on the **same** game serialises — `Game.Mutex` ensures one guess at a time
+- Guessing on the **same** game serialises — `Game.RWMutex` ensures one guess at a time
 - Guessing on **different** games runs fully in parallel — each game has its own mutex

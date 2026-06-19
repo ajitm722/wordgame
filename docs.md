@@ -696,24 +696,24 @@ sequenceDiagram
     Game->>Game: Reveal 'T' → current = "CAT"
     Game->>Game: Win check: "CAT" == "CAT" → StatusWon
     Game->>Game: mu.Unlock()
-    Game-->>R1: nil
+    Game-->>Handler: nil
 
-    Note over R1,Store: R1 reveals word, deletes game
-    R1->>Handler: resp.Word = "CAT"
-    R1->>Store: Delete(id)
-    R1-->>R1: 200 {current:"CAT", word:"CAT"}
+    Note over R1,R2: Mutex released — both branches run in parallel now
 
-    Note over Game: R2 now has the mutex
-    R2->>Game: ApplyGuess('Z')
-    Game->>Game: mu.Lock()
-    Game->>Game: validateInProgress → StatusWon!
-    Game->>Game: ErrGameCompleted
-    Game->>Game: mu.Unlock()
-    Game-->>R2: ErrGameCompleted
-
-    Note over R2,Handler: Handler dispatches via errors.Is
-    R2->>Handler: errors.Is(err, ErrGameCompleted) → true
-    R2-->>R2: 409 Conflict {error: "game already completed"}
+    par Handler continues for R1 (snapshot + cleanup + response)
+        Handler->>Game: g.Snapshot() → RLock → copy State → RUnlock
+        Handler->>Handler: resp.Word = g.Word ("CAT")
+        Handler->>Store: Store.Delete(id) → Lock → delete → Unlock
+        Handler-->>R1: 200 {current:"CAT", guesses_remaining:0, word:"CAT"}
+    and R2 grabs the freed mutex (immediately!)
+        R2->>Game: ApplyGuess('Z')
+        Game->>Game: mu.Lock() (acquired — no wait!)
+        Game->>Game: validateInProgress → StatusWon!
+        Game->>Game: ErrGameCompleted
+        Game->>Game: mu.Unlock()
+        Game-->>Handler: ErrGameCompleted
+        Handler-->>R2: 409 Conflict {error: "game already completed"}
+    end
 
     Note over R1,R2: Future requests for this ID → 404 (game deleted)
 ```
@@ -738,7 +738,7 @@ type Game struct {
     Word string    // The chosen word (uppercase, e.g. "APPLE")
     State          // Embedded — Current, GuessesRemaining, Status promoted
 
-    mu sync.Mutex  // Protects all fields from concurrent access
+    mu sync.RWMutex  // Protects all fields from concurrent access
 }
 
 // State holds a thread-safe snapshot of game state for external readers.
@@ -748,10 +748,10 @@ type State struct {
     Status           Status
 }
 
-// Snapshot copies the embedded State under lock.
+// Snapshot copies the embedded State under a read lock.
 func (g *Game) Snapshot() State {
-    g.mu.Lock()
-    defer g.mu.Unlock()
+    g.mu.RLock()
+    defer g.mu.RUnlock()
     return g.State
 }
 
@@ -907,7 +907,7 @@ ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of stat
 |---------|----------|-------|
 | `cmd/wordgame` | 6.7% | Smoke tests exercise `registerRoutes` + handlers via `httptest.Server`; `main()` and `runServer()` are not called directly by unit tests |
 | `internal/game` | 100.0% | Pure business logic, zero I/O — easy to exhaust |
-| `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)) |
+| `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.6](#106-coverage-caveat-defense-in-depth-default-branch)) |
 | `internal/store` | 100.0% | Simple CRUD with `sync.RWMutex` — all paths covered |
 | `pkg/identifier` | 100.0% | Single exported function with wrapped error |
 | `pkg/words` | 100.0% | `io.Reader`-based loader — all filtering paths tested |
@@ -915,9 +915,9 @@ ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of stat
 Four of six packages at 100%. The two exceptions are expected:
 
 - **`cmd/wordgame` (6.7%)** — The `main()`, `NewRootCommand()`, and `runServer()` functions are exercised via smoke tests which start a real `httptest.Server`. The 6.7% coverage comes from `registerRoutes` + handler code paths hit by smoke test HTTP requests. Entry-point wiring (`main`, `runServer`, command setup) is not called directly by any test — standard for thin entry-point packages.
-- **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.7](#107-coverage-caveat--defense-in-depth-default-branch)).
+- **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.6](#106-coverage-caveat-defense-in-depth-default-branch)).
 
-### 10.6 Coverage Caveat — Defense-in-Depth `default` Branch
+### 10.6 Coverage Caveat: Defense-in-Depth Default Branch
 
 The `else` branch in `HandleGuess` is defense-in-depth for unknown `ApplyGuess` errors:
 
