@@ -482,7 +482,7 @@ sequenceDiagram
 
     Handler-->>Client: 200 {id, current:"CAT", guesses:4, word:"CAT"}
 
-    Note over Client,Handler: Game deleted. Further guesses → 400 "game not found"
+    Note over Client,Handler: Game deleted. Further guesses → 404 "game not found"
 ```
 
 ### 7.4 Loss Detection & Cleanup
@@ -516,7 +516,7 @@ sequenceDiagram
 
     Handler-->>Client: 200 {id, current:"___", guesses:0, word:"DOG"}
 
-    Note over Client,Handler: Game deleted. Further guesses → 400 "game not found"
+    Note over Client,Handler: Game deleted. Further guesses → 404 "game not found"
 ```
 
 ### 7.5 Repeat Guess — Wrong Letter
