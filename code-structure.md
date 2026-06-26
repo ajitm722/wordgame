@@ -69,7 +69,7 @@ classDiagram
 
 - `cmd/` can import `internal/` and `pkg/`
 - `internal/` can import `pkg/` and other `internal/` packages
-- `pkg/` can only import standard library + external deps (no `internal/`)
+- `pkg/` can import standard library + external deps
 - No external module can import `internal/` — Go compiler blocks it
 
 **Direction:** Dependencies flow toward stability. `pkg/` packages have zero internal dependencies. `internal/game` has zero I/O. `internal/handler` orchestrates but contains no business rules.
@@ -306,7 +306,6 @@ Two-level locking: `GameStore.RWMutex` protects the game map, `Game.RWMutex` pro
 sequenceDiagram
     participant R1 as Request 1
     participant R2 as Request 2
-    participant Handler as handler
     participant Store as GameStore<br/>(sync.RWMutex)
     participant Game as Game: "abc"<br/>(sync.RWMutex)
 

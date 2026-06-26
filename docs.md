@@ -907,7 +907,7 @@ ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of stat
 |---------|----------|-------|
 | `cmd/wordgame` | 6.7% | Smoke tests exercise `registerRoutes` + handlers via `httptest.Server`; `main()` and `runServer()` are not called directly by unit tests |
 | `internal/game` | 100.0% | Pure business logic, zero I/O — easy to exhaust |
-| `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.6](#106-coverage-caveat-defense-in-depth-default-branch)) |
+| `internal/handler` | 98.3% | Defense-in-depth `else` branch is logically unreachable (see [§10.7](#107-coverage-caveat-defense-in-depth-default-branch)) |
 | `internal/store` | 100.0% | Simple CRUD with `sync.RWMutex` — all paths covered |
 | `pkg/identifier` | 100.0% | Single exported function with wrapped error |
 | `pkg/words` | 100.0% | `io.Reader`-based loader — all filtering paths tested |
@@ -915,9 +915,50 @@ ok      github.com/fleetdm/wordgame/pkg/words   0.003s  coverage: 100.0% of stat
 Four of six packages at 100%. The two exceptions are expected:
 
 - **`cmd/wordgame` (6.7%)** — The `main()`, `NewRootCommand()`, and `runServer()` functions are exercised via smoke tests which start a real `httptest.Server`. The 6.7% coverage comes from `registerRoutes` + handler code paths hit by smoke test HTTP requests. Entry-point wiring (`main`, `runServer`, command setup) is not called directly by any test — standard for thin entry-point packages.
-- **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.6](#106-coverage-caveat-defense-in-depth-default-branch)).
+- **`internal/handler` (98.3%)** — Defense-in-depth `else` branch is unreachable (see [§10.7](#107-coverage-caveat-defense-in-depth-default-branch)).
 
-### 10.6 Coverage Caveat: Defense-in-Depth Default Branch
+### 10.6 Beyond Coverage: Behavior-Driven Tests & Specs
+
+While high line coverage is a useful metric, tests shouldn't just focus on coverage. An AI agent (or even a human developer) can easily artificially inflate coverage by writing tests that simply map exactly to the existing code structure, modifying code slightly just to reach a 100% metric. However, code execution without behavioral correctness provides little value.
+
+The main agenda for tests is to **capture changes in behavior**, not merely to test isolated functions. We need Behavior-Driven tests that are based on the initial functional requirements, which essentially build up the "behavior contract" of the application.
+
+#### The Role of Specifications
+
+To ensure clear behavioral boundaries, we should define clear specifications (e.g., using OpenAPI or OpenSpec) based on these functional requirements.
+
+**Example relevant to WordGame:**
+A spec for the `POST /guess` endpoint would explicitly state:
+
+- **Given** a valid `GameID` and a 1-character uppercase `Guess`,
+- **When** the guess is submitted,
+- **Then** the API must return a `200 OK` with the updated `Current` string and decremented `GuessesRemaining`.
+- **Except When** the game is already complete, in which case it must return `409 Conflict`.
+
+These specs serve as the ultimate source of truth.
+
+#### AI Agents and Human Accountability
+
+We can do a back-and-forth with an AI agent to suggest different edge test cases for the behavior (e.g., "What if the user submits a number?", "What if the user submits multiple letters?"). The AI is excellent at brainstorming edge cases and generating the boilerplate for these tests. However, **the accountability stays with the human**. The human developer must verify that the test accurately reflects the functional requirement and isn't just "testing that the code does what the code currently does."
+
+Behavior and tests work together to ensure the code isn't drifting away from us. When we refactor (like moving from an in-memory map to a Redis store), the behavior tests should pass without any modifications. If a test breaks, it should mean the *behavior* broke, not just that a function signature changed.
+
+#### Types of Tests
+
+A robust test suite uses different types of tests to build confidence at different layers:
+
+1. **Fitness Tests (Architecture Tests):** Ensure structural rules aren't broken.
+   *Example:* A test ensuring the `game` package never imports the `handler` or `store` packages.
+2. **Smoke Tests:** Quick, surface-level checks to ensure the application starts and can handle basic input.
+   *Example:* Starting the WordGame server, creating one game, and submitting one guess to ensure no instant panics.
+3. **Integration Tests:** Ensure different components of the system work together.
+   *Example:* Testing that the `Handler` correctly retrieves a `Game` from the `Store`, applies a guess, and the `Store` successfully saves the updated state.
+4. **Acceptance (Behavioral) Tests:** Tests written from the user's perspective, verifying the application meets the business requirements.
+   *Example:* "User creates a game, guesses 6 wrong letters, and the status changes to LOST."
+5. **End-to-End (E2E) Tests:** Tests the entire system from the outermost boundary (often the UI or API boundary) down to the database.
+   *Example:* An automated script acting as an HTTP client that starts a game, plays through an entire winning scenario, and validates the HTTP response headers and JSON body match the OpenAPI spec exactly.
+
+### 10.7 Coverage Caveat: Defense-in-Depth Default Branch
 
 The `else` branch in `HandleGuess` is defense-in-depth for unknown `ApplyGuess` errors:
 
