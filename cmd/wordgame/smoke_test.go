@@ -58,14 +58,14 @@ func postJSON(t *testing.T, url, path string, body any) (*http.Response, []byte)
 	return resp, respBody
 }
 
-// TestSmokeNewGame_Shape verifies POST /new returns the correct JSON shape via real HTTP.
+// TestSmokeNewGame_Shape verifies POST /api/v1/new returns the correct JSON shape via real HTTP.
 func TestSmokeNewGame_Shape(t *testing.T) {
 	url := setupSmoke(t)
 
-	resp, body := postJSON(t, url, "/new", nil)
+	resp, body := postJSON(t, url, "/api/v1/new", nil)
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /new status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
+		t.Fatalf("POST /api/v1/new status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
 	}
 
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
@@ -93,20 +93,20 @@ func TestSmokeGuess_Correct(t *testing.T) {
 	url := setupSmoke(t)
 
 	// Create a new game
-	_, newBody := postJSON(t, url, "/new", nil)
+	_, newBody := postJSON(t, url, "/api/v1/new", nil)
 	var newGame handler.NewGameResponse
 	if err := json.Unmarshal(newBody, &newGame); err != nil {
 		t.Fatalf("unmarshal new game: %v", err)
 	}
 
 	// Guess 'Z' — this is in "ZZZZ", so it's correct
-	resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
+	resp, body := postJSON(t, url, "/api/v1/guess", handler.GuessRequest{
 		ID:    newGame.ID,
 		Guess: "Z",
 	})
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /guess status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
+		t.Fatalf("POST /api/v1/guess status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
 	}
 
 	var guessResp handler.GuessResponse
@@ -130,20 +130,20 @@ func TestSmokeGuess_Wrong(t *testing.T) {
 	url := setupSmoke(t)
 
 	// Create a new game
-	_, newBody := postJSON(t, url, "/new", nil)
+	_, newBody := postJSON(t, url, "/api/v1/new", nil)
 	var newGame handler.NewGameResponse
 	if err := json.Unmarshal(newBody, &newGame); err != nil {
 		t.Fatalf("unmarshal new game: %v", err)
 	}
 
 	// Guess 'A' — this is NOT in "ZZZZ", so it's wrong
-	resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
+	resp, body := postJSON(t, url, "/api/v1/guess", handler.GuessRequest{
 		ID:    newGame.ID,
 		Guess: "A",
 	})
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /guess status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
+		t.Fatalf("POST /api/v1/guess status = %d, want %d\nbody: %s", resp.StatusCode, http.StatusOK, body)
 	}
 
 	var guessResp handler.GuessResponse
@@ -167,7 +167,7 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 	url := setupSmoke(t)
 
 	// Create a new game
-	_, newBody := postJSON(t, url, "/new", nil)
+	_, newBody := postJSON(t, url, "/api/v1/new", nil)
 	var newGame handler.NewGameResponse
 	if err := json.Unmarshal(newBody, &newGame); err != nil {
 		t.Fatalf("unmarshal new game: %v", err)
@@ -175,7 +175,7 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 
 	// Make game.MaxGuesses wrong guesses to exhaust the game (word is "ZZZZ", guess 'A')
 	for i := range game.MaxGuesses {
-		resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
+		resp, body := postJSON(t, url, "/api/v1/guess", handler.GuessRequest{
 			ID:    newGame.ID,
 			Guess: "A",
 		})
@@ -201,13 +201,13 @@ func TestSmokeGuess_DeletedGame(t *testing.T) {
 	}
 
 	// The game should now be deleted — any further guess returns 404
-	resp, body := postJSON(t, url, "/guess", handler.GuessRequest{
+	resp, body := postJSON(t, url, "/api/v1/guess", handler.GuessRequest{
 		ID:    newGame.ID,
 		Guess: "A",
 	})
 
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("POST /guess after completion: status = %d, want 404\nbody: %s",
+		t.Fatalf("POST /api/v1/guess after completion: status = %d, want 404\nbody: %s",
 			resp.StatusCode, body)
 	}
 

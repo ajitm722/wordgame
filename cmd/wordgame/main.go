@@ -80,6 +80,7 @@ func runServer(stderr io.Writer, port string) error {
 // registerRoutes adds all HTTP routes to the given router.
 // Shared by runServer() and smoke tests so there is a single source of truth.
 func registerRoutes(r *mux.Router, srv *handler.Server) {
-	r.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
-	r.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
+	api := r.PathPrefix("/api/v1").Subrouter()
+	api.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
+	api.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
 }
