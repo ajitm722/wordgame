@@ -945,21 +945,6 @@ func (s *GameStore) Get(id string) *Game
 func (s *GameStore) Delete(id string)
 ```
 
-#### State diagram
-
-```mermaid
-stateDiagram-v2
-    [*] --> InProgress: POST /new
-
-    InProgress --> Won: all letters revealed (current == word)
-    InProgress --> Lost: guesses_remaining == 0
-    InProgress --> InProgress: correct guess
-    InProgress --> InProgress: wrong guess (guesses--)
-
-    Won --> [*]: game deleted from memory
-    Lost --> [*]: game deleted from memory
-```
-
 ### 4.12 Entry point wiring
 
 `cmd/wordgame/main.go` uses [Cobra](https://github.com/spf13/cobra) for CLI parsing:
