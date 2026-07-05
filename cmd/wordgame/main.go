@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/cobra"
 
+	"github.com/fleetdm/wordgame/internal/bindata"
 	"github.com/fleetdm/wordgame/internal/handler"
 	"github.com/fleetdm/wordgame/internal/store"
 	"github.com/fleetdm/wordgame/pkg/words"
@@ -64,7 +65,7 @@ func runServer(stderr io.Writer, port string) error {
 	// Create HTTP handler server with dependencies injected
 	srv := handler.NewServer(gameStore, wordList)
 
-	// Register routes — single source of truth
+	// Register routes — single source of truth for API routes
 	r := mux.NewRouter()
 	registerRoutes(r, srv)
 
@@ -83,4 +84,8 @@ func registerRoutes(r *mux.Router, srv *handler.Server) {
 	api := r.PathPrefix("/api/v1").Subrouter()
 	api.HandleFunc("/new", srv.HandleNewGame).Methods(http.MethodPost)
 	api.HandleFunc("/guess", srv.HandleGuess).Methods(http.MethodPost)
+
+	// Frontend SPA — serves built assets via go-bindata.
+	// Registered last so API routes take priority.
+	r.PathPrefix("/").Handler(bindata.FrontendHandler())
 }

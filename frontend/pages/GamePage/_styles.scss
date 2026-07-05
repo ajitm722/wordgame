@@ -1,0 +1,102 @@
+.game-page {
+  text-align: center;
+  font-family: sans-serif;
+
+  &__title {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+  }
+
+  &__board {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+  }
+
+  &__tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    border: 2px solid var(--color-tile-border);
+    border-radius: 4px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    background: var(--color-tile-bg);
+
+    &--revealed {
+      border-color: #4caf50;
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+  }
+
+  &__keyboard {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    justify-content: center;
+    max-width: 30rem;
+    margin: 0 auto 1.5rem;
+  }
+
+  &__key {
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 1px solid var(--color-key-border);
+    border-radius: 4px;
+    background: var(--color-key-bg);
+    font-size: 0.9rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--color-text);
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    &:hover:not(:disabled) {
+      background: var(--color-bg-muted);
+    }
+  }
+
+  &__guesses {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  &__btn {
+    padding: 0.6rem 1.5rem;
+    border: 1px solid var(--color-btn-border);
+    border-radius: 4px;
+    background: var(--color-btn-bg);
+    font-size: 1rem;
+    cursor: pointer;
+    color: var(--color-text);
+
+    &--primary {
+      background: #1976d2;
+      color: #fff;
+      border-color: #1565c0;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  &__message {
+    margin-bottom: 1rem;
+  }
+
+  &__error {
+    color: #d32f2f;
+    margin-bottom: 1rem;
+  }
+}
