@@ -11,6 +11,8 @@
 
 This is a **learning project**, not a production product. The point is to study the architecture, patterns, and tradeoffs of a real full-stack application. Every decision is documented here with the *why*, not just the *what*: package layout, concurrency model, state management, build pipeline, and test strategy.
 
+The patterns here are real — this same stack (Go backend + embedded React SPA + TypeScript + TanStack Query + MSW testing) is used in production at Fleet, Uber, HashiCorp, Stripe, and others. The code is small enough to read in an afternoon, but structured enough to grow into a real application.
+
 If you're a backend engineer trying to learn React, or a frontend engineer trying to learn Go, or just a curious developer wanting to see how the pieces fit together, this README is designed to be readable on its own. The diagrams are inline (Mermaid), the code samples are real, and the references between sections keep the whole picture coherent.
 
 ---
@@ -2194,7 +2196,3 @@ If you want to extend this project, here are good next steps:
 6. **Animations**: the board tiles could animate on letter reveal using CSS transitions or a library like Framer Motion.
 
 Each of these would touch the same three-package separation (`handler` / `game` / `store`) and follow the same patterns you've seen in this README. The architecture is designed to make additions land in the right place.
-
----
-
-*Built as a learning project. The patterns here are real — this same stack (Go backend + embedded React SPA + TypeScript + TanStack Query + MSW testing) is used in production at Fleet, Uber, HashiCorp, Stripe, and others. The code is small enough to read in an afternoon, but structured enough to grow into a real application.*
